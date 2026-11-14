@@ -1,0 +1,17 @@
+[Unit]
+Description=Klangkiste – RFID-Musikbox
+After=network.target sound.target mpd.service
+Wants=mpd.service
+
+[Service]
+User=klangkiste
+Group=klangkiste
+WorkingDirectory=/opt/klangkiste
+ExecStart=/usr/bin/python3 -m klangkiste --data /var/lib/klangkiste --port 80
+Environment=PYTHONUNBUFFERED=1
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,449 @@
+"use strict";
+const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const main = $("#main"), dialog = $("#dialog");
+const S = { state: { state: "offline" }, view: "now", folder: null, synced: 0, queue: [], queueKey: "", cfg: null };
+
+const ICON = {
+  play: '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>',
+  pause: '<svg viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>',
+  next: '<svg viewBox="0 0 24 24"><path d="M6 5v14l9-7zM16 5h3v14h-3z"/></svg>',
+  prev: '<svg viewBox="0 0 24 24"><path d="M18 5v14l-9-7zM5 5h3v14H5z"/></svg>',
+  card: '<svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M7 15h4M15 10a3 3 0 0 1 0 4"/></svg>',
+  trash: '<svg class="icon" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>',
+  edit: '<svg class="icon" viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
+  back: '<svg class="icon" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>',
+  plus: '<svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
+  vol: '<svg class="icon" viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4zM15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>',
+  music: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>',
+};
+
+// ---------- Helfer ----------
+async function api(path, body, method) {
+  const opt = body !== undefined
+    ? { method: method || "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
+    : { method: method || "GET" };
+  let r;
+  try { r = await fetch(path, opt); } catch (e) { throw new Error("Die Box ist nicht erreichbar"); }
+  const text = await r.text();
+  let data; try { data = JSON.parse(text); } catch { data = text; }
+  if (!r.ok) throw new Error((data && data.error) || `Fehler ${r.status}`);
+  return data;
+}
+function toast(msg, kind = "") {
+  const t = document.createElement("div");
+  t.className = "toast " + kind; t.textContent = msg; t.setAttribute("role", kind === "error" ? "alert" : "status");
+  $("#toasts").append(t); setTimeout(() => t.remove(), kind === "error" ? 6000 : 3000);
+}
+const run = (fn) => async (...a) => { try { return await fn(...a); } catch (e) { toast(e.message, "error"); } };
+const fmt = (s) => { s = Math.max(0, Math.round(s || 0)); const m = Math.floor(s / 60); return (m >= 60 ? Math.floor(m / 60) + ":" + String(m % 60).padStart(2, "0") : m) + ":" + String(s % 60).padStart(2, "0"); };
+const size = (b) => b > 1e9 ? (b / 1e9).toFixed(1).replace(".", ",") + " GB" : Math.max(1, Math.round(b / 1e6)) + " MB";
+function color(name) { let h = 0; for (const c of String(name)) h = (h * 31 + c.codePointAt(0)) % 360; return `hsl(${h} 55% 48%)`; }
+function initials(name) { const p = String(name).split("/").pop().trim().split(/\s+/); return ((p[0]?.[0] || "♪") + (p[1]?.[0] || "")).toUpperCase(); }
+function cover(folder, hasImg = true, v = "") {
+  if (folder == null || folder === "") return `<div class="cover" style="--c:var(--surface-2);color:var(--muted)">${ICON.music.replace("<svg", '<svg width="40%"')}</div>`;
+  const img = hasImg ? `<img loading="lazy" alt="" src="/api/cover?folder=${encodeURIComponent(folder)}${v}" onerror="this.remove()">` : "";
+  return `<div class="cover" style="--c:${color(folder)}">${esc(initials(folder))}${img}</div>`;
+}
+const leaf = (f) => String(f || "").split("/").pop();
+const act = (action, value) => run(() => api("/api/player", { action, value }))();
+
+function openDialog(html) { dialog.innerHTML = html; if (!dialog.open) dialog.showModal(); return dialog; }
+function closeDialog() { if (dialog.open) dialog.close(); }
+dialog.addEventListener("close", () => { if (S.onDialogClose) { const f = S.onDialogClose; S.onDialogClose = null; f(); } });
+function ask(title, text, okLabel = "OK", danger = false) {
+  return new Promise((res) => {
+    openDialog(`<h2>${esc(title)}</h2><p>${esc(text)}</p><div class="actions"><button class="btn" data-x="0">Abbrechen</button><button class="btn ${danger ? "danger" : "primary"}" data-x="1">${esc(okLabel)}</button></div>`);
+    let val = false; S.onDialogClose = () => res(val);
+    $$("[data-x]", dialog).forEach((b) => b.onclick = () => { val = b.dataset.x === "1"; closeDialog(); });
+  });
+}
+function prompt2(title, label, value = "", okLabel = "Speichern") {
+  return new Promise((res) => {
+    openDialog(`<form method="dialog"><h2>${esc(title)}</h2><label class="field"><span>${esc(label)}</span><input type="text" id="pv" value="${esc(value)}" autocomplete="off"></label><div class="actions"><button class="btn" type="button" id="pc">Abbrechen</button><button class="btn primary" value="ok">${esc(okLabel)}</button></div></form>`);
+    let val = null; S.onDialogClose = () => res(val);
+    $("#pc", dialog).onclick = closeDialog;
+    $("form", dialog).onsubmit = () => { val = $("#pv", dialog).value.trim() || null; };
+    $("#pv", dialog).select();
+  });
+}
+
+// ---------- Navigation ----------
+function go(view, folder = null) {
+  S.view = view; S.folder = folder;
+  $$("#nav button").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
+  history.replaceState(null, "", "#" + view + (folder ? "/" + encodeURIComponent(folder) : ""));
+  render(); window.scrollTo(0, 0);
+}
+$$("#nav button").forEach((b) => b.onclick = () => go(b.dataset.view));
+function render() { ({ now: viewNow, music: S.folder ? viewFolder : viewMusic, cards: viewCards, settings: viewSettings }[S.view])(); renderMini(); }
+
+// ---------- Live-Status ----------
+function elapsedNow() { const s = S.state; return s.state === "play" ? Math.min(s.duration || 1e9, s.elapsed + (performance.now() - S.synced) / 1000) : s.elapsed || 0; }
+function onState(s) {
+  const prev = S.state; S.state = s; S.synced = performance.now();
+  $("#brand-name").textContent = s.name || "Klangkiste"; document.title = s.name || "Klangkiste";
+  const key = [s.folder, s.url, s.tracks].join("|");
+  if (key !== S.queueKey) { S.queueKey = key; loadQueue(); }
+  if (S.view === "now") { if (prev.folder !== s.folder || prev.state === "offline" || s.state === "offline" || !$(".now")) viewNow(); else updateNow(); }
+  renderMini();
+}
+async function loadQueue() { try { S.queue = await api("/api/queue"); } catch { S.queue = []; } if (S.view === "now") renderQueue(); }
+function connect() {
+  const es = new EventSource("/api/events");
+  es.addEventListener("state", (e) => onState(JSON.parse(e.data)));
+  es.addEventListener("toast", (e) => { const d = JSON.parse(e.data); toast(d.message, d.kind); });
+  es.addEventListener("card", (e) => { const d = JSON.parse(e.data); if (!d.known) unknownCard(d.id); else hideBanner(); if (S.view === "cards") viewCards(); });
+  es.addEventListener("learned", (e) => { const d = JSON.parse(e.data); closeDialog(); toast("Karte gespeichert: " + leaf(d.target)); if (S.view !== "now") render(); });
+  es.addEventListener("backup", (e) => { S.backup = JSON.parse(e.data); if (S.view === "settings") paintBackup(); });
+  es.onerror = () => { if (S.state.state !== "offline") onState({ ...S.state, state: "offline", lost: true }); };
+}
+setInterval(() => { if (S.view === "now" && S.state.state === "play") tick(); }, 500);
+setInterval(run(async () => { if (!document.hidden && S.state.state === "play") { S.state = await api("/api/state"); S.synced = performance.now(); } }), 15000);
+
+// ---------- Ansicht: Läuft ----------
+function viewNow() {
+  const s = S.state;
+  if (s.state === "offline") {
+    main.innerHTML = `<div class="empty">${ICON.music}<h2>${s.lost ? "Verbindung zur Box verloren" : "Der Abspieler startet noch …"}</h2><p>${s.lost ? "Ich versuche es automatisch erneut." : "Einen Moment bitte."}</p></div>`; return;
+  }
+  const idle = !s.file;
+  main.innerHTML = `<div class="now">
+    <div id="np-cover">${cover(idle ? null : s.folder ?? "Radio", s.folder != null)}</div>
+    <div>
+      <p class="muted small" id="np-folder" style="margin:0 0 4px;font-weight:700;text-transform:uppercase;letter-spacing:.06em"></p>
+      <h1 id="np-title"></h1><p class="muted" id="np-sub"></p>
+      <div class="progress" id="np-prog" role="slider" aria-label="Position"><div><i></i></div></div>
+      <div class="times"><span id="np-el">0:00</span><span id="np-du">0:00</span></div>
+      <div class="controls">
+        <button aria-label="Zurück" data-a="prev">${ICON.prev}</button>
+        <button class="play" aria-label="Play/Pause" data-a="play_pause" id="np-play"></button>
+        <button aria-label="Weiter" data-a="next">${ICON.next}</button>
+      </div>
+      <div class="vol">${ICON.vol}<input type="range" id="np-vol" min="0" max="100" aria-label="Lautstärke"><b id="np-volv"></b></div>
+      <label class="switch" style="margin-top:14px"><span><b>Im Haus streamen</b><br><span class="muted small">Stellt den Ton für MusicCast bereit</span></span><input type="checkbox" id="np-stream"></label>
+    </div></div>
+    <div class="card" style="max-width:880px;margin:28px auto 0" id="np-queue-card" hidden><h2>Titel</h2><ol class="queue" id="np-queue"></ol></div>`;
+  $$(".controls button").forEach((b) => b.onclick = () => act(b.dataset.a));
+  const vol = $("#np-vol");
+  vol.oninput = () => { $("#np-volv").textContent = vol.value; vol.style.setProperty("--p", (vol.value / vol.max * 100) + "%"); S.volBusy = Date.now(); };
+  vol.onchange = () => act("volume", +vol.value);
+  $("#np-stream").onchange = (e) => act("stream", e.target.checked);
+  $("#np-prog").onclick = (e) => { const r = e.currentTarget.getBoundingClientRect(); if (S.state.duration) act("seek", (e.clientX - r.left) / r.width * S.state.duration); };
+  updateNow(); renderQueue();
+}
+function updateNow() {
+  const s = S.state; if (!$(".now")) return;
+  const idle = !s.file;
+  $("#np-folder").textContent = idle ? "" : s.spotify ? "Spotify" : s.url ? "Radio" : s.folder || "";
+  $("#np-title").textContent = idle ? "Nichts ausgewählt" : s.title;
+  $("#np-sub").textContent = idle ? "Leg eine Karte auf oder wähle etwas unter „Musik“." : [s.artist, s.tracks > 1 ? `Titel ${s.track} von ${s.tracks}` : ""].filter(Boolean).join(" · ");
+  $("#np-play").innerHTML = s.state === "play" ? ICON.pause : ICON.play;
+  const vol = $("#np-vol");
+  if (!S.volBusy || Date.now() - S.volBusy > 1500) { vol.max = S.cfg?.audio.volume_max || 100; vol.value = s.volume; $("#np-volv").textContent = s.volume; vol.style.setProperty("--p", (s.volume / vol.max * 100) + "%"); }
+  $("#np-stream").checked = !!s.stream;
+  $("#np-du").textContent = fmt(s.duration);
+  $$("#np-queue li").forEach((li, i) => li.classList.toggle("current", i === s.track - 1));
+  tick();
+}
+function tick() {
+  const el = $("#np-el"); if (!el) return; const s = S.state, e = elapsedNow();
+  el.textContent = fmt(e); $("#np-prog i").style.width = (s.duration ? Math.min(100, e / s.duration * 100) : 0) + "%";
+}
+function renderQueue() {
+  const card = $("#np-queue-card"); if (!card) return;
+  card.hidden = S.queue.length < 2;
+  $("#np-queue").innerHTML = S.queue.map((q, i) => `<li class="${i === S.state.track - 1 ? "current" : ""}" data-i="${i}"><span>${esc(q.title)}</span><small>${q.duration ? fmt(q.duration) : ""}</small></li>`).join("");
+  $$("#np-queue li").forEach((li) => li.onclick = () => act("jump", +li.dataset.i));
+}
+function renderMini() {
+  const m = $("#mini"), s = S.state;
+  if (S.view === "now" || !s.file || s.state === "offline" || s.state === "stop") { m.hidden = true; return; }
+  m.hidden = false;
+  m.innerHTML = `<div class="bar">${cover(s.folder ?? "Radio", s.folder != null)}<div class="t"><b>${esc(s.title)}</b><span>${esc(s.folder || "")}</span></div><button aria-label="Play/Pause">${s.state === "play" ? ICON.pause : ICON.play}</button></div>`;
+  $(".bar", m).onclick = () => go("now");
+  $("button", m).onclick = (e) => { e.stopPropagation(); act("play_pause"); };
+}
+
+// ---------- Ansicht: Musik ----------
+const viewMusic = run(async () => {
+  const d = await api("/api/library"); S.lib = d;
+  const top = d.folders;
+  main.innerHTML = `<div class="head"><div><h1>Musik</h1><span class="muted small">${top.length} Ordner · ${size(d.disk.free)} frei</span></div>
+    <button class="btn primary" id="new">${ICON.plus} Neuer Ordner</button></div>
+    ${top.length ? `<div class="folders">${top.map((f, i) => `<button class="folder" data-i="${i}">
+      <div style="position:relative">${cover(f.name, f.cover)}${f.cards.length ? `<span class="badge">${ICON.card.replace('class="icon"', "")} Karte</span>` : ""}</div>
+      <b>${esc(f.name)}</b><small>${f.tracks} Titel</small></button>`).join("")}</div>`
+      : `<div class="empty">${ICON.music}<h2>Noch keine Musik</h2><p>Leg einen Ordner an und lade Hörspiele oder Lieder hoch.<br>Eine alte Phoniebox kannst du unter Einstellungen › Umzug übernehmen.</p></div>`}`;
+  $("#new").onclick = run(async () => { const n = await prompt2("Neuer Ordner", "Name, z. B. „Bibi Blocksberg 12“", "", "Anlegen"); if (n) { const r = await api("/api/library/folder", { name: n }); go("music", r.name); } });
+  $$(".folder").forEach((b) => b.onclick = () => go("music", top[b.dataset.i].name));
+});
+
+const viewFolder = run(async () => {
+  const name = S.folder;
+  let tracks, lib;
+  try { [tracks, lib] = await Promise.all([api("/api/library/tracks?folder=" + encodeURIComponent(name)), api("/api/library")]); }
+  catch (e) { toast(e.message, "error"); return go("music"); }
+  const f = lib.folders.find((x) => x.name === name) || { cards: [], cover: false };
+  const total = tracks.reduce((a, t) => a + t.size, 0);
+  main.innerHTML = `<button class="btn small" id="back" style="margin-bottom:16px">${ICON.back} Alle Ordner</button>
+    <div class="detail-head"><div id="cv" title="Bild ändern">${cover(name, true, "&v=" + Date.now())}</div>
+      <div><h1 style="overflow-wrap:anywhere">${esc(name)}</h1><p class="muted">${tracks.length} Titel · ${size(total)} ${f.cards.length ? `<span class="pill accent">${f.cards.length === 1 ? "Karte zugewiesen" : f.cards.length + " Karten"}</span>` : ""}</p>
+      <div class="row wrap"><button class="btn primary" id="play" ${tracks.length ? "" : "disabled"}>${ICON.play.replace("<svg", '<svg class="icon" style="fill:currentColor;stroke:none"')} Abspielen</button>
+      <button class="btn" id="assign">${ICON.card} Karte zuweisen</button>
+      <button class="iconbtn" id="ren" aria-label="Umbenennen" title="Umbenennen">${ICON.edit}</button>
+      <button class="iconbtn" id="del" aria-label="Ordner löschen" title="Ordner löschen">${ICON.trash}</button></div></div></div>
+    <div class="drop" id="drop" tabindex="0" role="button"><b>Musik hinzufügen</b><br><span class="small">Dateien hierher ziehen oder tippen (MP3, M4A, OGG, FLAC, WAV)</span><div id="up"></div></div>
+    <input type="file" id="files" multiple accept="audio/*,.mp3,.m4a,.m4b,.ogg,.opus,.flac,.wav,.aac,image/*" hidden>
+    <input type="file" id="cvfile" accept="image/jpeg,image/png,image/webp" hidden>
+    <div class="card">${tracks.length ? `<ul class="list">${tracks.map((t, i) => `<li><span class="muted small" style="min-width:1.8em;text-align:right">${i + 1}</span><div class="grow"><b style="font-weight:600">${esc(t.file)}</b></div><span class="muted small">${size(t.size)}</span><button class="iconbtn" data-del="${i}" aria-label="Titel löschen">${ICON.trash}</button></li>`).join("")}</ul>` : `<p class="muted" style="margin:0">Dieser Ordner ist noch leer.</p>`}</div>`;
+  $("#back").onclick = () => go("music");
+  $("#play").onclick = () => { act("play_folder", name); go("now"); };
+  $("#assign").onclick = () => learnCard({ type: "folder", target: name });
+  $("#ren").onclick = run(async () => { const n = await prompt2("Ordner umbenennen", "Neuer Name", leaf(name)); if (n && n !== leaf(name)) { const r = await api("/api/library/rename", { folder: name, name: n }); go("music", r.name); } });
+  $("#del").onclick = run(async () => { if (await ask("Ordner löschen?", `„${name}“ mit ${tracks.length} Titeln wird endgültig gelöscht. Zugewiesene Karten werden frei.`, "Löschen", true)) { await api("/api/library/delete", { folder: name }); toast("Ordner gelöscht"); go("music"); } });
+  $$("[data-del]").forEach((b) => b.onclick = run(async () => { const t = tracks[b.dataset.del]; if (await ask("Titel löschen?", t.file, "Löschen", true)) { await api("/api/library/delete", { folder: name, file: t.file }); viewFolder(); } }));
+  const drop = $("#drop"), files = $("#files");
+  drop.onclick = () => files.click(); drop.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") files.click(); };
+  files.onchange = () => upload(name, [...files.files]);
+  drop.ondragover = (e) => { e.preventDefault(); drop.classList.add("over"); };
+  drop.ondragleave = () => drop.classList.remove("over");
+  drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove("over"); upload(name, [...e.dataTransfer.files]); };
+  $("#cv").onclick = () => $("#cvfile").click();
+  $("#cvfile").onchange = run(async (e) => { const fd = new FormData(); fd.append("file", e.target.files[0]); const r = await fetch("/api/cover?folder=" + encodeURIComponent(name), { method: "POST", body: fd }); if (!r.ok) throw new Error((await r.json()).error); viewFolder(); });
+});
+
+function xhrUpload(url, file, onProgress) {
+  return new Promise((res, rej) => {
+    const x = new XMLHttpRequest(), fd = new FormData(); fd.append("file", file, file.name);
+    x.open("POST", url); x.upload.onprogress = (e) => onProgress(e.loaded, e.total);
+    x.onload = () => { let d = {}; try { d = JSON.parse(x.responseText); } catch {} x.status < 300 ? res(d) : rej(new Error(d.error || "Upload fehlgeschlagen")); };
+    x.onerror = () => rej(new Error("Verbindung beim Hochladen abgebrochen")); x.send(fd);
+  });
+}
+async function upload(folder, list) {
+  if (!list.length || S.uploading) return; S.uploading = true;
+  const up = $("#up"), all = list.reduce((a, f) => a + f.size, 0); let done = 0; const errors = [];
+  for (const [i, f] of list.entries()) {
+    try {
+      const r = await xhrUpload("/api/library/upload?folder=" + encodeURIComponent(folder), f, (l) => { if (up.isConnected) up.innerHTML = `<progress max="${all}" value="${done + l}"></progress><div class="small">${i + 1} von ${list.length}: ${esc(f.name)}</div>`; });
+      errors.push(...(r.errors || []));
+    } catch (e) { errors.push(f.name + ": " + e.message); }
+    done += f.size;
+  }
+  S.uploading = false;
+  errors.length ? toast(errors[0] + (errors.length > 1 ? ` (+${errors.length - 1} weitere)` : ""), "error") : toast(list.length === 1 ? "Datei hochgeladen" : list.length + " Dateien hochgeladen");
+  if (S.view === "music" && S.folder === folder) viewFolder();
+}
+
+// ---------- Karten ----------
+function learnCard(spec) {
+  api("/api/cards/learn", spec).then(() => {
+    openDialog(`<h2>Karte auflegen</h2><div class="pulse">${ICON.card.replace('class="icon"', 'fill="none" stroke="currentColor" stroke-width="1.8"')}</div>
+      <p style="text-align:center">Leg jetzt die Karte für <b>${esc(spec.label || leaf(spec.target))}</b> auf die Box.<br><span class="muted small">Eine bereits vergebene Karte wird neu zugewiesen.</span></p>
+      <div class="actions"><button class="btn" id="lc">Abbrechen</button></div>`);
+    const timer = setTimeout(() => { if (dialog.open) { closeDialog(); toast("Keine Karte erkannt", "error"); } }, 30000);
+    S.onDialogClose = () => { clearTimeout(timer); api("/api/cards/learn/cancel", {}).catch(() => {}); };
+    $("#lc", dialog).onclick = closeDialog;
+  }).catch((e) => toast(e.message, "error"));
+}
+function hideBanner() { $("#banner").hidden = true; }
+function unknownCard(id) {
+  const b = $("#banner"); b.hidden = false;
+  b.innerHTML = `<div class="grow">Unbekannte Karte aufgelegt</div><button class="btn small" id="bz">Zuweisen</button><button class="iconbtn" id="bx" aria-label="Schließen" style="color:inherit">✕</button>`;
+  $("#bx").onclick = hideBanner; $("#bz").onclick = () => { hideBanner(); cardDialog(id); };
+  clearTimeout(S.bannerT); S.bannerT = setTimeout(hideBanner, 20000);
+}
+const CMD = { play_pause: "Play / Pause", next: "Nächster Titel", prev: "Vorheriger Titel", vol_up: "Lauter", vol_down: "Leiser", stop: "Stopp", shutdown: "Ausschalten" };
+const cardDialog = run(async (id = null, card = null) => {
+  const lib = await api("/api/library");
+  const t = card?.type || "folder";
+  openDialog(`<h2>${card ? "Karte bearbeiten" : "Neue Karte"}</h2>
+    <label class="field"><span>Was soll die Karte tun?</span><select id="ct"><option value="folder">Ordner abspielen</option><option value="url">Radio / Stream abspielen</option><option value="command">Befehl ausführen</option></select></label>
+    <label class="field" id="f-folder"><span>Ordner</span><select id="cfolder">${lib.folders.map((f) => `<option>${esc(f.name)}</option>`).join("")}</select></label>
+    <label class="switch" id="f-shuffle"><span>Zufällige Reihenfolge</span><input type="checkbox" id="cshuffle"></label>
+    <label class="field" id="f-url"><span>Adresse des Streams</span><input type="url" id="curl" placeholder="https://…"></label>
+    <label class="field" id="f-url2"><span>Name</span><input type="text" id="clabel" placeholder="z. B. Kinderradio"></label>
+    <label class="field" id="f-cmd"><span>Befehl</span><select id="ccmd">${Object.entries(CMD).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select></label>
+    <div class="actions"><button class="btn" id="cc">Abbrechen</button><button class="btn primary" id="cs">${card ? "Speichern" : id ? "Zuweisen" : "Weiter"}</button></div>`);
+  const ct = $("#ct", dialog); ct.value = t;
+  if (card) { if (t === "folder") $("#cfolder", dialog).value = card.target; if (t === "url") $("#curl", dialog).value = card.target; if (t === "command") $("#ccmd", dialog).value = card.target; $("#cshuffle", dialog).checked = !!card.shuffle; $("#clabel", dialog).value = card.label || ""; }
+  const show = () => { const v = ct.value; $("#f-folder", dialog).hidden = $("#f-shuffle", dialog).hidden = v !== "folder"; $("#f-shuffle", dialog).style.display = v === "folder" ? "" : "none"; $("#f-url", dialog).hidden = $("#f-url2", dialog).hidden = v !== "url"; $("#f-cmd", dialog).hidden = v !== "command"; };
+  ct.onchange = show; show();
+  $("#cc", dialog).onclick = closeDialog;
+  $("#cs", dialog).onclick = run(async () => {
+    const v = ct.value, spec = { type: v, target: v === "folder" ? $("#cfolder", dialog).value : v === "url" ? $("#curl", dialog).value.trim() : $("#ccmd", dialog).value, shuffle: $("#cshuffle", dialog).checked };
+    if (v === "url") spec.label = $("#clabel", dialog).value.trim(); if (v === "command") spec.label = CMD[spec.target];
+    if (!spec.target) throw new Error(v === "folder" ? "Bitte erst einen Ordner anlegen" : "Bitte eine Adresse eintragen");
+    if (card) { await api("/api/cards/update", { id, ...spec }); closeDialog(); toast("Gespeichert"); viewCards(); }
+    else if (id) { await api("/api/cards/learn", { id, ...spec }); closeDialog(); toast("Karte gespeichert"); if (S.view === "cards") viewCards(); }
+    else { closeDialog(); learnCard(spec); }
+  });
+});
+const viewCards = run(async () => {
+  const d = await api("/api/cards");
+  const label = (c) => c.type === "command" ? "Befehl: " + (CMD[c.target] || c.target) : c.type === "url" ? (c.label || c.target) : c.target;
+  main.innerHTML = `<div class="head"><div><h1>Karten</h1><div class="status-line" style="margin:4px 0 0"><span class="pill ${d.reader_ok ? "ok" : "bad"}">${d.reader_ok ? "Kartenleser bereit" : "Kartenleser nicht bereit"}</span><span class="muted small">${d.cards.length} Karten</span></div></div>
+    <button class="btn primary" id="add">${ICON.plus} Neue Karte</button></div>
+    ${d.reader_error ? `<div class="card"><b>${esc(d.reader_error)}</b></div>` : ""}
+    <div class="card">${d.cards.length ? `<ul class="list">${d.cards.map((c, i) => `<li>
+      <div style="width:46px;flex:none">${c.type === "folder" || !c.type ? cover(c.target, !c.missing) : `<div class="cover" style="--c:var(--surface-2);color:var(--muted);font-size:1.2rem">${c.type === "url" ? "📻" : "⚙"}</div>`}</div>
+      <div class="grow"><b>${esc(label(c))}</b><span>Karte ${esc(c.id)}${c.shuffle ? " · Zufall" : ""}${c.legacy ? " · übernommen" : ""} ${c.missing ? '<span class="pill bad">Ordner fehlt</span>' : ""}</span></div>
+      <button class="iconbtn" data-e="${i}" aria-label="Bearbeiten">${ICON.edit}</button><button class="iconbtn" data-d="${i}" aria-label="Karte löschen">${ICON.trash}</button></li>`).join("")}</ul>`
+      : `<div class="empty" style="padding:24px">${ICON.music}<p>Noch keine Karten. Tippe auf „Neue Karte“ oder leg einfach eine Karte auf die Box.</p></div>`}</div>`;
+  $("#add").onclick = () => cardDialog();
+  $$("[data-e]").forEach((b) => b.onclick = () => { const c = d.cards[b.dataset.e]; cardDialog(c.id, { type: "folder", ...c }); });
+  $$("[data-d]").forEach((b) => b.onclick = run(async () => { const c = d.cards[b.dataset.d]; if (await ask("Karte löschen?", `Die Karte für „${label(c)}“ wird frei. Die Musik bleibt erhalten.`, "Löschen", true)) { await api("/api/cards/delete", { id: c.id }); viewCards(); } }));
+});
+
+// ---------- Einstellungen ----------
+const DAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
+const viewSettings = run(async () => {
+  const [c, sys, bk] = await Promise.all([api("/api/config"), api("/api/system"), api("/api/backup/status")]);
+  const cfg = c.config; S.cfg = cfg; S.backup = bk; S.sys = sys;
+  const open = S.openSection || "general";
+  const sec = (id, title, body, extra = "") => `<details class="card" data-s="${id}" ${open === id ? "open" : ""}><summary><span>${title} ${extra}</span></summary>${body}</details>`;
+  const sw = (id, label, on, hint = "") => `<label class="switch"><span>${label}${hint ? `<br><span class="muted small">${hint}</span>` : ""}</span><input type="checkbox" id="${id}" ${on ? "checked" : ""}></label>`;
+  main.innerHTML = `<div class="head"><h1>Einstellungen</h1></div>
+  ${sec("general", "Allgemein", `
+    <label class="field"><span>Name der Box</span><input type="text" id="g-name" value="${esc(cfg.name)}" maxlength="40"></label>
+    <div class="grid2">
+      <label class="field"><span>Lautstärke beim Einschalten: <b id="g-vs-v">${cfg.audio.volume_start}</b></span><input type="range" id="g-vs" min="5" max="100" value="${cfg.audio.volume_start}"></label>
+      <label class="field"><span>Höchste Lautstärke: <b id="g-vm-v">${cfg.audio.volume_max}</b></span><input type="range" id="g-vm" min="10" max="100" value="${cfg.audio.volume_max}"></label>
+    </div>
+    ${sw("g-resume", "Hörspiele fortsetzen", cfg.audio.resume, "Beim nächsten Auflegen geht es an der letzten Stelle weiter")}
+    ${sw("g-remove", "Karte wegnehmen pausiert", cfg.audio.pause_on_remove, "Für Boxen, bei denen die Karte liegen bleibt")}
+    <div class="actions row" style="margin-top:12px"><button class="btn primary" id="g-save">Speichern</button></div>`)}
+  ${sec("buttons", "Knöpfe", `<p class="muted small">Du musst die Box nicht öffnen: „Knopf anlernen“ erkennt selbst, an welchem Anschluss ein Knopf hängt.</p>
+    <ul class="list" id="b-list"></ul>
+    <div class="row wrap" style="margin-top:14px"><button class="btn" id="b-learn">${ICON.plus} Knopf anlernen</button><button class="btn primary" id="b-save">Speichern</button></div>`)}
+  ${sec("house", "Im Haus hören", `
+    <h2>MusicCast</h2><p>Die Box stellt ihren Ton als Stream bereit. Home Assistant kann ihn auf jedem MusicCast-Gerät abspielen. Der Ton kommt dort einige Sekunden verzögert an.</p>
+    <p class="small muted">Adresse des Streams:</p><pre id="h-url">${esc(sys.stream_url)}</pre>
+    <p class="small muted">Skript für Home Assistant:</p><pre id="h-ha">lädt …</pre>
+    <button class="btn small" id="h-copy">Skript kopieren</button>
+    <h2 style="margin-top:22px">Spotify</h2><p>${sys.spotify ? `Die Box erscheint in der Spotify-App als Lautsprecher „Klangkiste“ (Spotify Premium nötig). Startet dort Musik, pausiert die Karte automatisch.` : "Spotify Connect ist auf dieser Box nicht installiert. Das Installationsskript richtet es mit ein."}</p>`)}
+  ${sec("mqtt", "MQTT / Home Assistant", `
+    <div class="status-line"><span class="pill ${c.mqtt.connected ? "ok" : cfg.mqtt.enabled ? "bad" : ""}">${c.mqtt.connected ? "Verbunden" : cfg.mqtt.enabled ? "Nicht verbunden" : "Aus"}</span>${c.mqtt.error ? `<span class="small muted">${esc(c.mqtt.error)}</span>` : ""}</div>
+    ${sw("m-on", "MQTT einschalten", cfg.mqtt.enabled)}
+    <div class="grid2"><label class="field"><span>Server (Broker)</span><input type="text" id="m-host" value="${esc(cfg.mqtt.host)}" placeholder="z. B. homeassistant.local"></label>
+    <label class="field"><span>Port</span><input type="number" id="m-port" value="${cfg.mqtt.port}"></label>
+    <label class="field"><span>Benutzer</span><input type="text" id="m-user" value="${esc(cfg.mqtt.username)}" autocomplete="off"></label>
+    <label class="field"><span>Passwort</span><input type="password" id="m-pass" placeholder="${cfg.mqtt.password_set ? "gespeichert – leer lassen zum Behalten" : ""}" autocomplete="new-password"></label>
+    <label class="field"><span>Themen-Präfix</span><input type="text" id="m-base" value="${esc(cfg.mqtt.base_topic)}"></label></div>
+    ${sw("m-disc", "In Home Assistant automatisch anlegen", cfg.mqtt.discovery)}
+    <p class="small muted">Befehle: <code>${esc(cfg.mqtt.base_topic)}/cmd/play_pause</code>, <code>next</code>, <code>prev</code>, <code>stop</code>, <code>volume</code> (0–100), <code>stream</code> (ON/OFF), <code>play_folder</code> (Ordnername). Status: <code>${esc(cfg.mqtt.base_topic)}/state</code>.</p>
+    <button class="btn primary" id="m-save">Speichern</button>`)}
+  ${sec("backup", "Sicherung", `<div id="bk-status" class="status-line"></div>
+    <p class="muted small">Gesichert werden Einstellungen, Karten und – wenn gewählt – die gesamte Musik auf dein IONOS HiDrive. In HiDrive muss unter Einstellungen › Zugriffsrechte und Protokolle „WebDAV“ aktiv sein.</p>
+    <div class="grid2"><label class="field"><span>HiDrive-Benutzername</span><input type="text" id="k-user" value="${esc(cfg.backup.username)}" autocomplete="off"></label>
+    <label class="field"><span>HiDrive-Passwort</span><input type="password" id="k-pass" placeholder="${cfg.backup.password_set ? "gespeichert – leer lassen zum Behalten" : ""}" autocomplete="new-password"></label>
+    <label class="field"><span>Ordner in HiDrive</span><input type="text" id="k-path" value="${esc(cfg.backup.remote_path)}"></label>
+    <label class="field"><span>WebDAV-Adresse</span><input type="url" id="k-url" value="${esc(cfg.backup.url)}"></label></div>
+    ${sw("k-music", "Musik mitsichern", cfg.backup.include_music)}
+    <div class="grid2"><label class="field"><span>Automatisch sichern</span><select id="k-sched"><option value="off">Nie</option><option value="daily">Täglich</option><option value="weekly">Wöchentlich</option></select></label>
+    <label class="field" id="k-day-f"><span>Wochentag</span><select id="k-day">${DAYS.map((d, i) => `<option value="${i}">${d}</option>`).join("")}</select></label>
+    <label class="field" id="k-hour-f"><span>Uhrzeit</span><select id="k-hour">${[...Array(24)].map((_, i) => `<option value="${i}">${i}:00 Uhr</option>`).join("")}</select></label></div>
+    <div class="row wrap"><button class="btn" id="k-save">Speichern</button><button class="btn" id="k-test">Verbindung testen</button><button class="btn primary" id="k-run">Jetzt sichern</button><button class="btn" id="k-restore">Wiederherstellen …</button></div>
+    <h2 style="margin-top:22px">Ohne HiDrive</h2><p class="muted small">Einstellungen und Karten (ohne Musik) als Datei auf dieses Gerät laden oder von dort zurückspielen.</p>
+    <div class="row wrap"><a class="btn" href="/api/backup/download" download>Herunterladen</a><button class="btn" id="k-up">Datei zurückspielen</button><input type="file" id="k-file" accept=".gz,.tar,.tgz" hidden></div>`)}
+  ${sec("import", "Umzug von der alten Phoniebox", `<p>Übernimmt Musik und Karten einer Phoniebox 2.x. Führe auf deinem Computer diesen Befehl aus, solange die alte Box läuft. Er lädt alles in eine Datei:</p>
+    <pre>ssh pi@raspberrypi "tar c -C /home/pi/RPi-Jukebox-RFID/shared shortcuts audiofolders" > phoniebox-alt.tar</pre>
+    <p class="small muted">Unter Windows bitte in der „Eingabeaufforderung“ (cmd) ausführen, nicht in der PowerShell.</p><p>Danach die Datei hier auswählen. Bei viel Musik dauert das Hochladen einige Minuten.</p>
+    <div id="i-prog"></div><button class="btn primary" id="i-btn">Datei auswählen</button><input type="file" id="i-file" accept=".tar,.gz,.tgz" hidden>`)}
+  ${sec("system", "System", `<ul class="list">
+      <li><div class="grow"><b>Version</b><span>${esc(sys.version)}${sys.revision ? " · " + esc(sys.revision) : ""}${sys.mock ? " · Simulationsmodus" : ""}</span></div><button class="btn small" id="s-update">Nach Updates suchen</button></li>
+      <li><div class="grow"><b>Adresse</b><span>http://${esc(sys.ip || sys.hostname)} · ${esc(sys.hostname)}</span></div></li>
+      <li><div class="grow"><b>Speicher</b><span>${size(sys.disk.free)} von ${size(sys.disk.total)} frei</span></div></li>
+      ${sys.temperature ? `<li><div class="grow"><b>Temperatur</b><span>${String(sys.temperature).replace(".", ",")} °C</span></div></li>` : ""}
+      <li><div class="grow"><b>Abspieler</b><span>${sys.mpd ? "läuft" : "nicht erreichbar"}</span></div></li></ul>
+    <div class="row wrap" style="margin-top:14px"><button class="btn" data-p="reboot">Neu starten</button><button class="btn danger" data-p="shutdown">Ausschalten</button></div>`)}`;
+  $$("details.card").forEach((d) => d.addEventListener("toggle", () => { if (d.open) { S.openSection = d.dataset.s; $$("details.card").forEach((o) => { if (o !== d) o.open = false; }); } }));
+  const save = (patch, msg = "Gespeichert") => run(async () => { await api("/api/config", patch); toast(msg); viewSettings(); })();
+
+  // Allgemein
+  for (const k of ["vs", "vm"]) $("#g-" + k).oninput = (e) => $("#g-" + k + "-v").textContent = e.target.value;
+  $("#g-save").onclick = () => save({ name: $("#g-name").value, audio: { volume_start: Math.min(+$("#g-vs").value, +$("#g-vm").value), volume_max: +$("#g-vm").value, resume: $("#g-resume").checked, pause_on_remove: $("#g-remove").checked } });
+
+  // Knöpfe
+  let btns = cfg.buttons.map((b) => ({ ...b }));
+  const paintButtons = () => {
+    $("#b-list").innerHTML = btns.length ? btns.map((b, i) => `<li><div style="min-width:92px"><b>GPIO ${b.pin}</b>${c.button_errors[b.pin] ? '<br><span class="pill bad">Fehler</span>' : ""}</div>
+      <div class="grow"><select data-ba="${i}" aria-label="Funktion">${Object.entries(c.actions).map(([k, v]) => `<option value="${k}" ${k === b.action ? "selected" : ""}>${v}</option>`).join("")}</select></div>
+      <button class="iconbtn" data-bd="${i}" aria-label="Knopf entfernen">${ICON.trash}</button></li>`).join("") : '<li class="muted">Noch keine Knöpfe eingerichtet.</li>';
+    $$("[data-ba]").forEach((s) => s.onchange = () => btns[s.dataset.ba].action = s.value);
+    $$("[data-bd]").forEach((x) => x.onclick = () => { btns.splice(x.dataset.bd, 1); paintButtons(); });
+  };
+  paintButtons();
+  $("#b-save").onclick = () => save({ buttons: btns });
+  $("#b-learn").onclick = run(async () => {
+    openDialog(`<h2>Knopf anlernen</h2><div class="pulse"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg></div><p style="text-align:center">Drück jetzt den Knopf an der Box, den du einrichten möchtest.<br><span class="muted small">Ich warte 15 Sekunden.</span></p>`);
+    let r; try { r = await api("/api/buttons/learn", {}); } finally { closeDialog(); }
+    if (r.pin == null) return toast("Kein Knopfdruck erkannt", "error");
+    const ex = btns.find((b) => b.pin === r.pin);
+    if (ex) toast(`Das ist der Knopf „${c.actions[ex.action]}“ (GPIO ${r.pin})`);
+    else { btns.push({ pin: r.pin, action: "play_pause" }); paintButtons(); toast(`Knopf an GPIO ${r.pin} gefunden – Funktion wählen und speichern`); }
+  });
+
+  // Haus
+  fetch("/api/homeassistant").then((r) => r.text()).then((t) => { if ($("#h-ha")) $("#h-ha").textContent = t; });
+  $("#h-copy").onclick = () => navigator.clipboard?.writeText($("#h-ha").textContent).then(() => toast("Kopiert"), () => toast("Bitte von Hand markieren und kopieren", "error"));
+
+  // MQTT
+  $("#m-save").onclick = () => save({ mqtt: { enabled: $("#m-on").checked, host: $("#m-host").value.trim(), port: +$("#m-port").value || 1883, username: $("#m-user").value.trim(), password: $("#m-pass").value, base_topic: $("#m-base").value.trim() || "klangkiste", discovery: $("#m-disc").checked } });
+
+  // Sicherung
+  $("#k-sched").value = cfg.backup.schedule; $("#k-day").value = cfg.backup.weekday; $("#k-hour").value = cfg.backup.hour;
+  const sched = () => { const v = $("#k-sched").value; $("#k-day-f").hidden = v !== "weekly"; $("#k-hour-f").hidden = v === "off"; };
+  $("#k-sched").onchange = sched; sched();
+  const bkPatch = () => ({ backup: { username: $("#k-user").value.trim(), password: $("#k-pass").value, remote_path: $("#k-path").value.trim() || "Klangkiste", url: $("#k-url").value.trim(), include_music: $("#k-music").checked, schedule: $("#k-sched").value, weekday: +$("#k-day").value, hour: +$("#k-hour").value } });
+  $("#k-save").onclick = () => save(bkPatch());
+  $("#k-test").onclick = run(async (e) => { const b = e.currentTarget; b.disabled = true; try { await api("/api/config", bkPatch()); await api("/api/backup/test", {}); toast("Verbindung zu HiDrive steht"); } finally { b.disabled = false; } });
+  $("#k-run").onclick = run(async () => { await api("/api/config", bkPatch()); await api("/api/backup/run", {}); toast("Sicherung gestartet"); });
+  $("#k-restore").onclick = run(async () => {
+    openDialog(`<h2>Wiederherstellen</h2><p class="muted">Suche Sicherungen in HiDrive …</p>`);
+    let list; try { list = await api("/api/backup/list"); } catch (e) { closeDialog(); throw e; }
+    if (!list.length) { closeDialog(); return toast("In HiDrive liegt noch keine Sicherung", "error"); }
+    openDialog(`<h2>Wiederherstellen</h2><label class="field"><span>Sicherung vom</span><select id="r-name">${list.map((n) => `<option value="${esc(n)}">${esc(n.replace("klangkiste-", "").replace(".tar.gz", "").replace("_", " um ").replace(/(\d\d)(\d\d)$/, "$1:$2 Uhr"))}</option>`).join("")}</select></label>
+      <label class="switch"><span>Musik zurückholen</span><input type="checkbox" id="r-music" checked></label><p class="muted small">Einstellungen und Karten auf der Box werden durch die Sicherung ersetzt.</p>
+      <div class="actions"><button class="btn" id="r-c">Abbrechen</button><button class="btn primary" id="r-ok">Wiederherstellen</button></div>`);
+    $("#r-c", dialog).onclick = closeDialog;
+    $("#r-ok", dialog).onclick = run(async (e) => { e.currentTarget.disabled = true; e.currentTarget.textContent = "Läuft …"; try { await api("/api/backup/restore", { name: $("#r-name", dialog).value, music: $("#r-music", dialog).checked }); toast("Wiederhergestellt"); } finally { closeDialog(); viewSettings(); } });
+  });
+  $("#k-up").onclick = () => $("#k-file").click();
+  $("#k-file").onchange = run(async (e) => { if (!await ask("Zurückspielen?", "Einstellungen und Karten auf der Box werden durch die Datei ersetzt.", "Ersetzen")) return; await xhrUpload("/api/backup/upload", e.target.files[0], () => {}); toast("Zurückgespielt"); viewSettings(); });
+  paintBackup();
+
+  // Umzug
+  $("#i-btn").onclick = () => $("#i-file").click();
+  $("#i-file").onchange = run(async (e) => {
+    const f = e.target.files[0], p = $("#i-prog"), b = $("#i-btn"); b.disabled = true;
+    try {
+      const r = await xhrUpload("/api/import/legacy", f, (l, t) => p.innerHTML = l < t ? `<progress max="${t}" value="${l}" style="width:100%;accent-color:var(--accent)"></progress><p class="small muted">Lade hoch … ${Math.round(l / t * 100)} %</p>` : `<p class="small muted">Packe aus und richte Karten ein …</p>`);
+      p.innerHTML = `<p><b>Fertig:</b> ${r.files} Dateien und ${r.cards} Karten übernommen.${r.missing.length ? ` ${r.missing.length} Karten zeigen auf fehlende Ordner.` : ""}</p>`;
+    } catch (err) { p.innerHTML = ""; throw err; } finally { b.disabled = false; }
+  });
+
+  // System
+  $("#s-update").onclick = run(async (e) => { const b = e.currentTarget; b.disabled = true; try { const r = await api("/api/system", { action: "update" }); toast(r.changed ? "Update eingespielt – die Box startet neu" : "Die Box ist auf dem neuesten Stand"); } finally { b.disabled = false; } });
+  $$("[data-p]").forEach((b) => b.onclick = run(async () => { const a = b.dataset.p; if (await ask(a === "reboot" ? "Box neu starten?" : "Box ausschalten?", a === "reboot" ? "Die Wiedergabe stoppt, nach etwa einer Minute ist die Box wieder da." : "Zum Einschalten musst du danach kurz den Strom trennen.", a === "reboot" ? "Neu starten" : "Ausschalten", a !== "reboot")) { await api("/api/system", { action: a }); toast(a === "reboot" ? "Die Box startet neu …" : "Die Box schaltet sich aus …"); } }));
+});
+function paintBackup() {
+  const el = $("#bk-status"), b = S.backup || {}; if (!el) return;
+  const when = (t) => t ? new Date(t).toLocaleString("de-DE", { dateStyle: "medium", timeStyle: "short" }) : "";
+  el.innerHTML = b.running ? `<span class="pill accent">Läuft</span><span class="small">${esc(b.step || "")}</span>`
+    : b.ok === false ? `<span class="pill bad">Letzte Sicherung fehlgeschlagen</span><span class="small muted">${esc(b.error || "")}</span>`
+    : b.last_ok ? `<span class="pill ok">Gesichert</span><span class="small muted">zuletzt am ${when(b.last_ok)}</span>`
+    : `<span class="pill">Noch nie gesichert</span>`;
+  const r = $("#k-run"); if (r) r.disabled = !!b.running;
+}
+
+// ---------- Start ----------
+(async function start() {
+  try { S.cfg = (await api("/api/config")).config; } catch {}
+  const [v, f] = location.hash.slice(1).split("/");
+  S.view = ["now", "music", "cards", "settings"].includes(v) ? v : "now"; S.folder = f ? decodeURIComponent(f) : null;
+  $$("#nav button").forEach((b) => b.classList.toggle("active", b.dataset.view === S.view));
+  render(); connect();
+})();
