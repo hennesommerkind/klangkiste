@@ -72,7 +72,8 @@ class Box:
         elif cfg["enabled"]:
             try:
                 from .rfid import MFRC522
-                self.reader = MFRC522(cfg["spi_bus"], cfg["spi_device"], cfg["rst_pin"], cfg.get("spi_speed", 1000000))
+                self.reader = MFRC522(cfg["spi_bus"], cfg["spi_device"], cfg["rst_pin"],
+                                      cfg.get("spi_speed", 1000000), cfg.get("gain", 4))
                 v = self.reader.version()
                 if v in (0x00, 0xFF):
                     self.reader_error = f"Kartenleser antwortet nicht (Kennung 0x{v:02X}) – Verkabelung/Reset-Pin prüfen"

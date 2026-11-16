@@ -34,7 +34,8 @@ def card_ids(uid5):
 
 
 class MFRC522:
-    def __init__(self, bus=0, device=0, rst_pin=25, speed=1_000_000):
+    def __init__(self, bus=0, device=0, rst_pin=25, speed=1_000_000, gain=4):
+        self.gain = max(0, min(7, int(gain)))
         import spidev
         from gpiozero import OutputDevice
 
@@ -71,7 +72,9 @@ class MFRC522:
         self._w(T_RELOAD_H, 0)
         self._w(TX_ASK, 0x40)
         self._w(MODE, 0x3D)
-        self._w(RF_CFG, 0x70)  # maximale Empfangsverstärkung (Gehäusewand)
+        # Empfangsverstärkung 0–7 (4 = 33 dB). Höhere Werte lesen durch dickere
+        # Gehäusewände, verwirren aber manche Nachbau-Chips (Kennung 0xB2).
+        self._w(RF_CFG, self.gain << 4)
         self._set(TX_CONTROL, 0x03)  # Antenne an
 
     def version(self):
@@ -102,9 +105,14 @@ class MFRC522:
 
     def read_uid(self):
         """Gibt die 5 Bytes (UID + Prüfbyte) zurück oder None."""
-        self._w(BIT_FRAMING, 0x07)
-        data, bits = self._transceive([0x26])
-        if data is None or bits != 16:
+        # Eine Karte, die eben gelesen wurde, ignoriert die erste Anfrage
+        # (sie springt dabei in den Ruhezustand) – deshalb einmal wiederholen.
+        for _ in range(2):
+            self._w(BIT_FRAMING, 0x07)
+            data, bits = self._transceive([0x26])
+            if data is not None and bits == 16:
+                break
+        else:
             return None
         self._w(BIT_FRAMING, 0x00)
         data, _ = self._transceive([0x93, 0x20])
