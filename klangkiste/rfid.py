@@ -34,14 +34,14 @@ def card_ids(uid5):
 
 
 class MFRC522:
-    def __init__(self, bus=0, device=0, rst_pin=25):
+    def __init__(self, bus=0, device=0, rst_pin=25, speed=1_000_000):
         import spidev
         from gpiozero import OutputDevice
 
         self._rst = OutputDevice(rst_pin, initial_value=True) if rst_pin is not None else None
         self.spi = spidev.SpiDev()
         self.spi.open(bus, device)
-        self.spi.max_speed_hz = 1_000_000
+        self.spi.max_speed_hz = int(speed)
         self.spi.mode = 0
         self.init()
 

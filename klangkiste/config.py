@@ -21,7 +21,7 @@ DEFAULTS = {
         {"pin": 12, "action": "play_pause"},
         {"pin": 5, "action": "next"},
     ],
-    "rfid": {"enabled": True, "rst_pin": 25, "spi_bus": 0, "spi_device": 0},
+    "rfid": {"enabled": True, "rst_pin": 25, "spi_bus": 0, "spi_device": 0, "spi_speed": 1000000},
     "mqtt": {
         "enabled": False,
         "host": "",

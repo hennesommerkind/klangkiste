@@ -72,7 +72,7 @@ class Box:
         elif cfg["enabled"]:
             try:
                 from .rfid import MFRC522
-                self.reader = MFRC522(cfg["spi_bus"], cfg["spi_device"], cfg["rst_pin"])
+                self.reader = MFRC522(cfg["spi_bus"], cfg["spi_device"], cfg["rst_pin"], cfg.get("spi_speed", 1000000))
                 v = self.reader.version()
                 if v in (0x00, 0xFF):
                     self.reader_error = f"Kartenleser antwortet nicht (Kennung 0x{v:02X}) – Verkabelung/Reset-Pin prüfen"
@@ -202,6 +202,7 @@ class Box:
     def on_card(self, main, alts):
         cards = self.store.cards
         key = next((k for k in [main, *alts] if k in cards), None)
+        log.info("Karte aufgelegt: %s (%s)", main, "bekannt" if key else "unbekannt")
         if self.learn and time.monotonic() < self.learn["until"]:
             spec, self.learn = self.learn["spec"], None
             for k in [main, *alts]:
@@ -247,6 +248,7 @@ class Box:
         self.active_card = card_id
 
     def on_remove(self):
+        log.info("Karte entfernt")
         self.emit("card_removed", {})
         if self.store.config["audio"]["pause_on_remove"] and self.active_card:
             self.player.pause()
