@@ -3,6 +3,7 @@ import argparse
 import asyncio
 import json
 import logging
+import mimetypes
 import os
 import time
 from pathlib import Path
@@ -21,6 +22,11 @@ from .player import Player
 from .rfid import CardWatcher, MockReader
 
 log = logging.getLogger("klangkiste")
+# Nicht auf die Systemtabelle verlassen: falsche Typen lassen Browser
+# Stildatei oder Skript stillschweigend verwerfen.
+for _ext, _type in ((".css", "text/css"), (".js", "text/javascript"), (".svg", "image/svg+xml"),
+                    (".html", "text/html"), (".webp", "image/webp")):
+    mimetypes.add_type(_type, _ext)
 WEB = Path(__file__).resolve().parent.parent / "web"
 
 
