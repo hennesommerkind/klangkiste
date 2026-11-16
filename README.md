@@ -9,8 +9,9 @@ einrichten, sichern.
 - **MQTT** mit automatischer Erkennung in Home Assistant
 - **Im Haus hören**: MP3-Stream für MusicCast (über Home Assistant), Spotify Connect
 - **Sicherung** zu IONOS HiDrive auf Knopfdruck oder nach Zeitplan, mit Wiederherstellung
-- **Umzug** von einer Phoniebox 2.x (Musik und Karten)
-- Hörspiele werden an der letzten Stelle fortgesetzt
+- **Hörspiele und Musik getrennt**, Serien mit Folgen als Unterordner
+- **Kartenmodus** „Auflegen und liegen lassen“ (wegnehmen = Pause) oder „Antippen“
+- Hörspiele werden an der letzten Stelle fortgesetzt, Musik beginnt von vorn
 
 ## Hardware
 
@@ -35,16 +36,20 @@ Kartenleser: SDA → GPIO 8, SCK → GPIO 11, MOSI → GPIO 10, MISO → GPIO 9,
 
 Andere Soundkarte? `SOUND_OVERLAY=… SOUND_CARD=…` vor den Befehl setzen (siehe `install.sh`).
 
-## Umzug von der alten Phoniebox
+## Musik ordnen
 
-Solange die alte Box läuft, auf dem Computer ausführen (unter Windows in der
-Eingabeaufforderung, nicht in der PowerShell):
-
-```bash
-ssh pi@raspberrypi "tar c -C /home/pi/RPi-Jukebox-RFID/shared shortcuts audiofolders" > phoniebox-alt.tar
+```
+Hörspiele/
+  Der Grüffelo/              ← einzelnes Hörspiel: Titel direkt im Ordner
+  Bibi Blocksberg/           ← Serie
+    Folge 2 – Der Hexenbesen/
+    Folge 10 – Kartoffelbrei/
+Musik/
+  Rolf Zuckowski/
 ```
 
-Die Datei später unter **Einstellungen › Umzug** hochladen.
+Eine Karte kann auf eine einzelne Folge oder auf die ganze Serie zeigen (dann laufen alle
+Folgen nacheinander, in natürlicher Reihenfolge: Folge 2 vor Folge 10).
 
 ## MQTT
 

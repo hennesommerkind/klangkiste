@@ -13,7 +13,7 @@ DEFAULTS = {
         "volume_max": 80,
         "volume_step": 5,
         "resume": True,          # Hörspiele an der letzten Stelle fortsetzen
-        "pause_on_remove": False,  # Karte wegnehmen = Pause
+        "pause_on_remove": True,   # Kartenmodus: liegen lassen (True) oder antippen (False)
         "stream_port": 8000,
     },
     "buttons": [

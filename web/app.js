@@ -15,6 +15,7 @@ const ICON = {
   edit: '<svg class="icon" viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
   back: '<svg class="icon" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>',
   plus: '<svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
+  move: '<svg class="icon" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M10 13h6M13 10l3 3-3 3"/></svg>',
   vol: '<svg class="icon" viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4zM15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>',
   music: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>',
 };
@@ -40,7 +41,12 @@ const run = (fn) => async (...a) => { try { return await fn(...a); } catch (e) {
 const fmt = (s) => { s = Math.max(0, Math.round(s || 0)); const m = Math.floor(s / 60); return (m >= 60 ? Math.floor(m / 60) + ":" + String(m % 60).padStart(2, "0") : m) + ":" + String(s % 60).padStart(2, "0"); };
 const size = (b) => b > 1e9 ? (b / 1e9).toFixed(1).replace(".", ",") + " GB" : Math.max(1, Math.round(b / 1e6)) + " MB";
 function color(name) { let h = 0; for (const c of String(name)) h = (h * 31 + c.codePointAt(0)) % 360; return `hsl(${h} 55% 48%)`; }
-function initials(name) { const p = String(name).split("/").pop().trim().split(/\s+/); return ((p[0]?.[0] || "♪") + (p[1]?.[0] || "")).toUpperCase(); }
+function initials(name) {
+  const l = String(name).split("/").pop().trim();
+  const m = l.match(/^(Folge|Teil|Band|Episode|Kapitel|CD|Nr\.?)\s*(\d+)/i) || l.match(/^(\d+)\b/);
+  if (m) return m[m.length - 1];
+  const p = l.split(/\s+/); return ((p[0]?.[0] || "♪") + (p[1]?.[0] || "")).toUpperCase();
+}
 function cover(folder, hasImg = true, v = "") {
   if (folder == null || folder === "") return `<div class="cover" style="--c:var(--surface-2);color:var(--muted)">${ICON.music.replace("<svg", '<svg width="40%"')}</div>`;
   const img = hasImg ? `<img loading="lazy" alt="" src="/api/cover?folder=${encodeURIComponent(folder)}${v}" onerror="this.remove()">` : "";
@@ -136,7 +142,7 @@ function viewNow() {
 function updateNow() {
   const s = S.state; if (!$(".now")) return;
   const idle = !s.file;
-  $("#np-folder").textContent = idle ? "" : s.spotify ? "Spotify" : s.url ? "Radio" : s.folder || "";
+  $("#np-folder").textContent = idle ? "" : s.spotify ? "Spotify" : s.url ? "Radio" : pretty((s.folder || "").replace(/^(Hörspiele|Musik)\//, ""));
   $("#np-title").textContent = idle ? "Nichts ausgewählt" : s.title;
   $("#np-sub").textContent = idle ? "Leg eine Karte auf oder wähle etwas unter „Musik“." : [s.artist, s.tracks > 1 ? `Titel ${s.track} von ${s.tracks}` : ""].filter(Boolean).join(" · ");
   $("#np-play").innerHTML = s.state === "play" ? ICON.pause : ICON.play;
@@ -161,23 +167,41 @@ function renderMini() {
   const m = $("#mini"), s = S.state;
   if (S.view === "now" || !s.file || s.state === "offline" || s.state === "stop") { m.hidden = true; return; }
   m.hidden = false;
-  m.innerHTML = `<div class="bar">${cover(s.folder ?? "Radio", s.folder != null)}<div class="t"><b>${esc(s.title)}</b><span>${esc(s.folder || "")}</span></div><button aria-label="Play/Pause">${s.state === "play" ? ICON.pause : ICON.play}</button></div>`;
+  m.innerHTML = `<div class="bar">${cover(s.folder ?? "Radio", s.folder != null)}<div class="t"><b>${esc(s.title)}</b><span>${esc(pretty((s.folder || "").replace(/^(Hörspiele|Musik)\//, "")))}</span></div><button aria-label="Play/Pause">${s.state === "play" ? ICON.pause : ICON.play}</button></div>`;
   $(".bar", m).onclick = () => go("now");
   $("button", m).onclick = (e) => { e.stopPropagation(); act("play_pause"); };
 }
 
 // ---------- Ansicht: Musik ----------
+const CATS = ["Hörspiele", "Musik"];
+const pretty = (p) => String(p || "").split("/").join(" › ");
+const catOf = (p) => CATS.find((c) => p === c || String(p).startsWith(c + "/"));
+const childrenOf = (folders, parent) => folders.filter((f) => f.name.startsWith(parent + "/") && !f.name.slice(parent.length + 1).includes("/"));
+const isMusic = (p) => catOf(p) === "Musik";
+const subLabel = (f) => f.subfolders ? `${f.subfolders} ${isMusic(f.name) ? (f.subfolders === 1 ? "Ordner" : "Ordner") : (f.subfolders === 1 ? "Folge" : "Folgen")}` : `${f.tracks} Titel`;
+function tiles(list) {
+  return `<div class="folders">${list.map((f) => `<button class="folder" data-f="${esc(f.name)}">
+    <div style="position:relative">${cover(f.name, f.cover)}${f.cards.length ? `<span class="badge">${ICON.card.replace('class="icon"', "")} Karte</span>` : ""}</div>
+    <b>${esc(leaf(f.name))}</b><small>${subLabel(f)}</small></button>`).join("")}</div>`;
+}
+function bindTiles() { $$(".folder[data-f]").forEach((b) => b.onclick = () => go("music", b.dataset.f)); }
+
 const viewMusic = run(async () => {
   const d = await api("/api/library"); S.lib = d;
-  const top = d.folders;
-  main.innerHTML = `<div class="head"><div><h1>Musik</h1><span class="muted small">${top.length} Ordner · ${size(d.disk.free)} frei</span></div>
-    <button class="btn primary" id="new">${ICON.plus} Neuer Ordner</button></div>
-    ${top.length ? `<div class="folders">${top.map((f, i) => `<button class="folder" data-i="${i}">
-      <div style="position:relative">${cover(f.name, f.cover)}${f.cards.length ? `<span class="badge">${ICON.card.replace('class="icon"', "")} Karte</span>` : ""}</div>
-      <b>${esc(f.name)}</b><small>${f.tracks} Titel</small></button>`).join("")}</div>`
-      : `<div class="empty">${ICON.music}<h2>Noch keine Musik</h2><p>Leg einen Ordner an und lade Hörspiele oder Lieder hoch.<br>Eine alte Phoniebox kannst du unter Einstellungen › Umzug übernehmen.</p></div>`}`;
-  $("#new").onclick = run(async () => { const n = await prompt2("Neuer Ordner", "Name, z. B. „Bibi Blocksberg 12“", "", "Anlegen"); if (n) { const r = await api("/api/library/folder", { name: n }); go("music", r.name); } });
-  $$(".folder").forEach((b) => b.onclick = () => go("music", top[b.dataset.i].name));
+  const cat = S.cat || "Hörspiele";
+  const list = childrenOf(d.folders, cat);
+  const loose = d.folders.filter((f) => !f.name.includes("/") && !CATS.includes(f.name));
+  main.innerHTML = `<div class="head"><div><h1>Musik</h1><span class="muted small">${size(d.disk.free)} frei</span></div>
+    <button class="btn primary" id="new">${ICON.plus} ${cat === "Musik" ? "Neuer Ordner" : "Neues Hörspiel / neue Serie"}</button></div>
+    <div class="seg" role="tablist">${CATS.map((c) => `<button role="tab" aria-selected="${c === cat}" data-c="${c}">${c}</button>`).join("")}</div>
+    ${list.length ? tiles(list) : `<div class="empty">${ICON.music}<h2>Noch nichts unter „${cat}“</h2><p>${cat === "Musik" ? "Leg einen Ordner an, zum Beispiel für einen Künstler oder ein Album." : "Leg ein Hörspiel an oder eine Serie, in der du die einzelnen Folgen sammelst."}</p></div>`}
+    ${loose.length ? `<h2 style="margin-top:30px">Ohne Kategorie</h2><p class="muted small">Diese Ordner liegen außerhalb von „Hörspiele“ und „Musik“. Öffne sie und wähle „Verschieben“.</p>${tiles(loose)}` : ""}`;
+  $$(".seg button").forEach((b) => b.onclick = () => { S.cat = b.dataset.c; viewMusic(); });
+  $("#new").onclick = run(async () => {
+    const n = await prompt2(cat === "Musik" ? "Neuer Ordner" : "Neues Hörspiel oder neue Serie", cat === "Musik" ? "Name, z. B. „Rolf Zuckowski“" : "Name, z. B. „Bibi Blocksberg“", "", "Anlegen");
+    if (n) { const r = await api("/api/library/folder", { name: cat + "/" + n }); go("music", r.name); }
+  });
+  bindTiles();
 });
 
 const viewFolder = run(async () => {
@@ -185,31 +209,55 @@ const viewFolder = run(async () => {
   let tracks, lib;
   try { [tracks, lib] = await Promise.all([api("/api/library/tracks?folder=" + encodeURIComponent(name)), api("/api/library")]); }
   catch (e) { toast(e.message, "error"); return go("music"); }
-  const f = lib.folders.find((x) => x.name === name) || { cards: [], cover: false };
+  const f = lib.folders.find((x) => x.name === name) || { cards: [], cover: false, total_tracks: tracks.length, subfolders: 0 };
+  const subs = childrenOf(lib.folders, name);
+  const cat = catOf(name), music = cat === "Musik";
   const total = tracks.reduce((a, t) => a + t.size, 0);
-  main.innerHTML = `<button class="btn small" id="back" style="margin-bottom:16px">${ICON.back} Alle Ordner</button>
+  const parts = name.split("/");
+  const crumbs = parts.slice(0, -1).map((p, i) => `<button class="crumb" data-p="${esc(parts.slice(0, i + 1).join("/"))}">${esc(p)}</button>`).join('<span class="muted">›</span>');
+  const subWord = music ? "Unterordner" : "Folgen";
+  const meta = [subs.length ? `${subs.length} ${music ? "Unterordner" : subs.length === 1 ? "Folge" : "Folgen"}` : "", `${f.total_tracks} Titel`, tracks.length ? size(total) : ""].filter(Boolean).join(" · ");
+  main.innerHTML = `<nav class="crumbs">${ICON.back}${crumbs}</nav>
     <div class="detail-head"><div id="cv" title="Bild ändern">${cover(name, true, "&v=" + Date.now())}</div>
-      <div><h1 style="overflow-wrap:anywhere">${esc(name)}</h1><p class="muted">${tracks.length} Titel · ${size(total)} ${f.cards.length ? `<span class="pill accent">${f.cards.length === 1 ? "Karte zugewiesen" : f.cards.length + " Karten"}</span>` : ""}</p>
-      <div class="row wrap"><button class="btn primary" id="play" ${tracks.length ? "" : "disabled"}>${ICON.play.replace("<svg", '<svg class="icon" style="fill:currentColor;stroke:none"')} Abspielen</button>
+      <div><h1 style="overflow-wrap:anywhere">${esc(leaf(name))}</h1><p class="muted">${meta} ${f.cards.length ? `<span class="pill accent">${f.cards.length === 1 ? "Karte zugewiesen" : f.cards.length + " Karten"}</span>` : ""}</p>
+      <div class="row wrap"><button class="btn primary" id="play" ${f.total_tracks ? "" : "disabled"}>${ICON.play.replace("<svg", '<svg class="icon" style="fill:currentColor;stroke:none"')} ${subs.length ? "Alles abspielen" : "Abspielen"}</button>
       <button class="btn" id="assign">${ICON.card} Karte zuweisen</button>
+      <button class="iconbtn" id="sub" aria-label="${music ? "Unterordner anlegen" : "Folge anlegen"}" title="${music ? "Unterordner anlegen" : "Folge anlegen"}">${ICON.plus}</button>
       <button class="iconbtn" id="ren" aria-label="Umbenennen" title="Umbenennen">${ICON.edit}</button>
+      <button class="iconbtn" id="mv" aria-label="Verschieben" title="Verschieben">${ICON.move}</button>
       <button class="iconbtn" id="del" aria-label="Ordner löschen" title="Ordner löschen">${ICON.trash}</button></div></div></div>
-    <div class="drop" id="drop" tabindex="0" role="button"><b>Musik hinzufügen</b><br><span class="small">Dateien hierher ziehen oder tippen (MP3, M4A, OGG, FLAC, WAV)</span><div id="up"></div></div>
+    ${subs.length ? `<h2>${subWord}</h2>${tiles(subs)}<div style="height:26px"></div>` : ""}
+    ${subs.length && !tracks.length ? `<p class="muted small">Titel lädst du in die einzelnen ${subWord} hoch. Eine Karte für „${esc(leaf(name))}“ spielt alle ${subWord} nacheinander.</p>` : `
+    <div class="drop" id="drop" tabindex="0" role="button"><b>Titel hinzufügen</b><br><span class="small">Dateien hierher ziehen oder tippen (MP3, M4A, OGG, FLAC, WAV)</span><div id="up"></div></div>
+    <div class="card">${tracks.length ? `<ul class="list">${tracks.map((t, i) => `<li><span class="muted small" style="min-width:1.8em;text-align:right">${i + 1}</span><div class="grow"><b style="font-weight:600">${esc(t.file)}</b></div><span class="muted small">${size(t.size)}</span><button class="iconbtn" data-del="${i}" aria-label="Titel löschen">${ICON.trash}</button></li>`).join("")}</ul>` : `<p class="muted" style="margin:0">Dieser Ordner ist noch leer.${music ? "" : " Für eine Serie lege mit + Folgen an; für ein einzelnes Hörspiel lade die Titel direkt hier hoch."}</p>`}</div>`}
     <input type="file" id="files" multiple accept="audio/*,.mp3,.m4a,.m4b,.ogg,.opus,.flac,.wav,.aac,image/*" hidden>
-    <input type="file" id="cvfile" accept="image/jpeg,image/png,image/webp" hidden>
-    <div class="card">${tracks.length ? `<ul class="list">${tracks.map((t, i) => `<li><span class="muted small" style="min-width:1.8em;text-align:right">${i + 1}</span><div class="grow"><b style="font-weight:600">${esc(t.file)}</b></div><span class="muted small">${size(t.size)}</span><button class="iconbtn" data-del="${i}" aria-label="Titel löschen">${ICON.trash}</button></li>`).join("")}</ul>` : `<p class="muted" style="margin:0">Dieser Ordner ist noch leer.</p>`}</div>`;
-  $("#back").onclick = () => go("music");
+    <input type="file" id="cvfile" accept="image/jpeg,image/png,image/webp" hidden>`;
+  $$(".crumbs .crumb").forEach((b) => b.onclick = () => { const p = b.dataset.p; if (CATS.includes(p)) { S.cat = p; go("music"); } else go("music", p); });
+  $(".crumbs svg").onclick = () => { const up = parts.slice(0, -1).join("/"); if (CATS.includes(up)) { S.cat = up; go("music"); } else go("music", up); };
+  bindTiles();
   $("#play").onclick = () => { act("play_folder", name); go("now"); };
   $("#assign").onclick = () => learnCard({ type: "folder", target: name });
-  $("#ren").onclick = run(async () => { const n = await prompt2("Ordner umbenennen", "Neuer Name", leaf(name)); if (n && n !== leaf(name)) { const r = await api("/api/library/rename", { folder: name, name: n }); go("music", r.name); } });
-  $("#del").onclick = run(async () => { if (await ask("Ordner löschen?", `„${name}“ mit ${tracks.length} Titeln wird endgültig gelöscht. Zugewiesene Karten werden frei.`, "Löschen", true)) { await api("/api/library/delete", { folder: name }); toast("Ordner gelöscht"); go("music"); } });
+  $("#sub").onclick = run(async () => { const n = await prompt2(music ? "Neuer Unterordner" : "Neue Folge", music ? "Name, z. B. ein Albumtitel" : "Name, z. B. „Folge 12 – Hexen gibt es doch“", "", "Anlegen"); if (n) { const r = await api("/api/library/folder", { name: name + "/" + n }); go("music", r.name); } });
+  $("#ren").onclick = run(async () => { const n = await prompt2("Umbenennen", "Neuer Name", leaf(name)); if (n && n !== leaf(name)) { const r = await api("/api/library/rename", { folder: name, name: n }); go("music", r.name); } });
+  $("#mv").onclick = run(async () => {
+    const targets = [...CATS, ...lib.folders.map((x) => x.name)].filter((t) => t !== name && !t.startsWith(name + "/") && t !== parts.slice(0, -1).join("/"));
+    openDialog(`<h2>Verschieben</h2><p class="muted">„${esc(leaf(name))}“ verschieben nach …</p>
+      <label class="field"><span>Ziel</span><select id="mvt">${targets.map((t) => `<option value="${esc(t)}">${esc(pretty(t))}</option>`).join("")}</select></label>
+      <p class="muted small">So machst du aus einzelnen Hörspielen eine Serie: Serie anlegen, dann die Folgen hineinschieben. Zugewiesene Karten bleiben gültig.</p>
+      <div class="actions"><button class="btn" id="mvc">Abbrechen</button><button class="btn primary" id="mvo">Verschieben</button></div>`);
+    $("#mvc", dialog).onclick = closeDialog;
+    $("#mvo", dialog).onclick = run(async () => { const r = await api("/api/library/move", { folder: name, parent: $("#mvt", dialog).value }); closeDialog(); toast("Verschoben"); go("music", r.name); });
+  });
+  $("#del").onclick = run(async () => { if (await ask("Ordner löschen?", `„${leaf(name)}“ mit ${f.total_tracks} Titeln${subs.length ? ` und ${subs.length} ${subWord}` : ""} wird endgültig gelöscht. Zugewiesene Karten werden frei.`, "Löschen", true)) { await api("/api/library/delete", { folder: name }); toast("Ordner gelöscht"); const up = parts.slice(0, -1).join("/"); if (CATS.includes(up)) { S.cat = up; go("music"); } else go("music", up); } });
   $$("[data-del]").forEach((b) => b.onclick = run(async () => { const t = tracks[b.dataset.del]; if (await ask("Titel löschen?", t.file, "Löschen", true)) { await api("/api/library/delete", { folder: name, file: t.file }); viewFolder(); } }));
   const drop = $("#drop"), files = $("#files");
-  drop.onclick = () => files.click(); drop.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") files.click(); };
+  if (drop) {
+    drop.onclick = () => files.click(); drop.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") files.click(); };
+    drop.ondragover = (e) => { e.preventDefault(); drop.classList.add("over"); };
+    drop.ondragleave = () => drop.classList.remove("over");
+    drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove("over"); upload(name, [...e.dataTransfer.files]); };
+  }
   files.onchange = () => upload(name, [...files.files]);
-  drop.ondragover = (e) => { e.preventDefault(); drop.classList.add("over"); };
-  drop.ondragleave = () => drop.classList.remove("over");
-  drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove("over"); upload(name, [...e.dataTransfer.files]); };
   $("#cv").onclick = () => $("#cvfile").click();
   $("#cvfile").onchange = run(async (e) => { const fd = new FormData(); fd.append("file", e.target.files[0]); const r = await fetch("/api/cover?folder=" + encodeURIComponent(name), { method: "POST", body: fd }); if (!r.ok) throw new Error((await r.json()).error); viewFolder(); });
 });
@@ -241,7 +289,7 @@ async function upload(folder, list) {
 function learnCard(spec) {
   api("/api/cards/learn", spec).then(() => {
     openDialog(`<h2>Karte auflegen</h2><div class="pulse">${ICON.card.replace('class="icon"', 'fill="none" stroke="currentColor" stroke-width="1.8"')}</div>
-      <p style="text-align:center">Leg jetzt die Karte für <b>${esc(spec.label || leaf(spec.target))}</b> auf die Box.<br><span class="muted small">Eine bereits vergebene Karte wird neu zugewiesen.</span></p>
+      <p style="text-align:center">Leg jetzt die Karte für <b>${esc(spec.label || pretty(spec.target))}</b> auf die Box.<br><span class="muted small">Eine bereits vergebene Karte wird neu zugewiesen.</span></p>
       <div class="actions"><button class="btn" id="lc">Abbrechen</button></div>`);
     const timer = setTimeout(() => { if (dialog.open) { closeDialog(); toast("Keine Karte erkannt", "error"); } }, 30000);
     S.onDialogClose = () => { clearTimeout(timer); api("/api/cards/learn/cancel", {}).catch(() => {}); };
@@ -261,7 +309,7 @@ const cardDialog = run(async (id = null, card = null) => {
   const t = card?.type || "folder";
   openDialog(`<h2>${card ? "Karte bearbeiten" : "Neue Karte"}</h2>
     <label class="field"><span>Was soll die Karte tun?</span><select id="ct"><option value="folder">Ordner abspielen</option><option value="url">Radio / Stream abspielen</option><option value="command">Befehl ausführen</option></select></label>
-    <label class="field" id="f-folder"><span>Ordner</span><select id="cfolder">${lib.folders.map((f) => `<option>${esc(f.name)}</option>`).join("")}</select></label>
+    <label class="field" id="f-folder"><span>Ordner</span><select id="cfolder">${CATS.map((c) => { const fs = lib.folders.filter((f) => catOf(f.name) === c); return fs.length ? `<optgroup label="${c}">${fs.map((f) => `<option value="${esc(f.name)}">${esc(pretty(f.name.slice(c.length + 1)))}</option>`).join("")}</optgroup>` : ""; }).join("")}${lib.folders.filter((f) => !catOf(f.name)).map((f) => `<option value="${esc(f.name)}">${esc(pretty(f.name))}</option>`).join("")}</select></label>
     <label class="switch" id="f-shuffle"><span>Zufällige Reihenfolge</span><input type="checkbox" id="cshuffle"></label>
     <label class="field" id="f-url"><span>Adresse des Streams</span><input type="url" id="curl" placeholder="https://…"></label>
     <label class="field" id="f-url2"><span>Name</span><input type="text" id="clabel" placeholder="z. B. Kinderradio"></label>
@@ -283,13 +331,13 @@ const cardDialog = run(async (id = null, card = null) => {
 });
 const viewCards = run(async () => {
   const d = await api("/api/cards");
-  const label = (c) => c.type === "command" ? "Befehl: " + (CMD[c.target] || c.target) : c.type === "url" ? (c.label || c.target) : c.target;
+  const label = (c) => c.type === "command" ? "Befehl: " + (CMD[c.target] || c.target) : c.type === "url" ? (c.label || c.target) : pretty(c.target);
   main.innerHTML = `<div class="head"><div><h1>Karten</h1><div class="status-line" style="margin:4px 0 0"><span class="pill ${d.reader_ok ? "ok" : "bad"}">${d.reader_ok ? "Kartenleser bereit" : "Kartenleser nicht bereit"}</span><span class="muted small">${d.cards.length} Karten</span></div></div>
     <button class="btn primary" id="add">${ICON.plus} Neue Karte</button></div>
     ${d.reader_error ? `<div class="card"><b>${esc(d.reader_error)}</b></div>` : ""}
     <div class="card">${d.cards.length ? `<ul class="list">${d.cards.map((c, i) => `<li>
       <div style="width:46px;flex:none">${c.type === "folder" || !c.type ? cover(c.target, !c.missing) : `<div class="cover" style="--c:var(--surface-2);color:var(--muted);font-size:1.2rem">${c.type === "url" ? "📻" : "⚙"}</div>`}</div>
-      <div class="grow"><b>${esc(label(c))}</b><span>Karte ${esc(c.id)}${c.shuffle ? " · Zufall" : ""}${c.legacy ? " · übernommen" : ""} ${c.missing ? '<span class="pill bad">Ordner fehlt</span>' : ""}</span></div>
+      <div class="grow"><b>${esc(label(c))}</b><span>Karte ${esc(c.id)}${c.shuffle ? " · Zufall" : ""} ${c.missing ? '<span class="pill bad">Ordner fehlt</span>' : ""}</span></div>
       <button class="iconbtn" data-e="${i}" aria-label="Bearbeiten">${ICON.edit}</button><button class="iconbtn" data-d="${i}" aria-label="Karte löschen">${ICON.trash}</button></li>`).join("")}</ul>`
       : `<div class="empty" style="padding:24px">${ICON.music}<p>Noch keine Karten. Tippe auf „Neue Karte“ oder leg einfach eine Karte auf die Box.</p></div>`}</div>`;
   $("#add").onclick = () => cardDialog();
@@ -312,8 +360,12 @@ const viewSettings = run(async () => {
       <label class="field"><span>Lautstärke beim Einschalten: <b id="g-vs-v">${cfg.audio.volume_start}</b></span><input type="range" id="g-vs" min="5" max="100" value="${cfg.audio.volume_start}"></label>
       <label class="field"><span>Höchste Lautstärke: <b id="g-vm-v">${cfg.audio.volume_max}</b></span><input type="range" id="g-vm" min="10" max="100" value="${cfg.audio.volume_max}"></label>
     </div>
-    ${sw("g-resume", "Hörspiele fortsetzen", cfg.audio.resume, "Beim nächsten Auflegen geht es an der letzten Stelle weiter")}
-    ${sw("g-remove", "Karte wegnehmen pausiert", cfg.audio.pause_on_remove, "Für Boxen, bei denen die Karte liegen bleibt")}
+    <p style="font-weight:650;font-size:.9rem;margin:8px 0 6px">Kartenmodus</p>
+    <div class="choices">
+      <label class="choice"><input type="radio" name="g-mode" value="place" ${cfg.audio.pause_on_remove ? "checked" : ""}><span><b>Auflegen und liegen lassen</b><br><span class="muted small">Karte drauf: spielt. Karte weg: Pause. Dieselbe Karte wieder drauf: geht weiter.</span></span></label>
+      <label class="choice"><input type="radio" name="g-mode" value="tap" ${cfg.audio.pause_on_remove ? "" : "checked"}><span><b>Antippen</b><br><span class="muted small">Karte kurz auflegen startet. Wegnehmen ändert nichts, Pause über den Knopf.</span></span></label>
+    </div>
+    ${sw("g-resume", "Hörspiele fortsetzen", cfg.audio.resume, "Hörspiele gehen an der letzten Stelle weiter, auch nach einer anderen Karte. Musik beginnt immer von vorn.")}
     <div class="actions row" style="margin-top:12px"><button class="btn primary" id="g-save">Speichern</button></div>`)}
   ${sec("buttons", "Knöpfe", `<p class="muted small">Du musst die Box nicht öffnen: „Knopf anlernen“ erkennt selbst, an welchem Anschluss ein Knopf hängt.</p>
     <ul class="list" id="b-list"></ul>
@@ -348,10 +400,6 @@ const viewSettings = run(async () => {
     <div class="row wrap"><button class="btn" id="k-save">Speichern</button><button class="btn" id="k-test">Verbindung testen</button><button class="btn primary" id="k-run">Jetzt sichern</button><button class="btn" id="k-restore">Wiederherstellen …</button></div>
     <h2 style="margin-top:22px">Ohne HiDrive</h2><p class="muted small">Einstellungen und Karten (ohne Musik) als Datei auf dieses Gerät laden oder von dort zurückspielen.</p>
     <div class="row wrap"><a class="btn" href="/api/backup/download" download>Herunterladen</a><button class="btn" id="k-up">Datei zurückspielen</button><input type="file" id="k-file" accept=".gz,.tar,.tgz" hidden></div>`)}
-  ${sec("import", "Umzug von der alten Phoniebox", `<p>Übernimmt Musik und Karten einer Phoniebox 2.x. Führe auf deinem Computer diesen Befehl aus, solange die alte Box läuft. Er lädt alles in eine Datei:</p>
-    <pre>ssh pi@raspberrypi "tar c -C /home/pi/RPi-Jukebox-RFID/shared shortcuts audiofolders" > phoniebox-alt.tar</pre>
-    <p class="small muted">Unter Windows bitte in der „Eingabeaufforderung“ (cmd) ausführen, nicht in der PowerShell.</p><p>Danach die Datei hier auswählen. Bei viel Musik dauert das Hochladen einige Minuten.</p>
-    <div id="i-prog"></div><button class="btn primary" id="i-btn">Datei auswählen</button><input type="file" id="i-file" accept=".tar,.gz,.tgz" hidden>`)}
   ${sec("system", "System", `<ul class="list">
       <li><div class="grow"><b>Version</b><span>${esc(sys.version)}${sys.revision ? " · " + esc(sys.revision) : ""}${sys.mock ? " · Simulationsmodus" : ""}</span></div><button class="btn small" id="s-update">Nach Updates suchen</button></li>
       <li><div class="grow"><b>Adresse</b><span>http://${esc(sys.ip || sys.hostname)} · ${esc(sys.hostname)}</span></div></li>
@@ -364,7 +412,7 @@ const viewSettings = run(async () => {
 
   // Allgemein
   for (const k of ["vs", "vm"]) $("#g-" + k).oninput = (e) => $("#g-" + k + "-v").textContent = e.target.value;
-  $("#g-save").onclick = () => save({ name: $("#g-name").value, audio: { volume_start: Math.min(+$("#g-vs").value, +$("#g-vm").value), volume_max: +$("#g-vm").value, resume: $("#g-resume").checked, pause_on_remove: $("#g-remove").checked } });
+  $("#g-save").onclick = () => save({ name: $("#g-name").value, audio: { volume_start: Math.min(+$("#g-vs").value, +$("#g-vm").value), volume_max: +$("#g-vm").value, resume: $("#g-resume").checked, pause_on_remove: $('[name="g-mode"]:checked').value === "place" } });
 
   // Knöpfe
   let btns = cfg.buttons.map((b) => ({ ...b }));
@@ -414,16 +462,6 @@ const viewSettings = run(async () => {
   $("#k-up").onclick = () => $("#k-file").click();
   $("#k-file").onchange = run(async (e) => { if (!await ask("Zurückspielen?", "Einstellungen und Karten auf der Box werden durch die Datei ersetzt.", "Ersetzen")) return; await xhrUpload("/api/backup/upload", e.target.files[0], () => {}); toast("Zurückgespielt"); viewSettings(); });
   paintBackup();
-
-  // Umzug
-  $("#i-btn").onclick = () => $("#i-file").click();
-  $("#i-file").onchange = run(async (e) => {
-    const f = e.target.files[0], p = $("#i-prog"), b = $("#i-btn"); b.disabled = true;
-    try {
-      const r = await xhrUpload("/api/import/legacy", f, (l, t) => p.innerHTML = l < t ? `<progress max="${t}" value="${l}" style="width:100%;accent-color:var(--accent)"></progress><p class="small muted">Lade hoch … ${Math.round(l / t * 100)} %</p>` : `<p class="small muted">Packe aus und richte Karten ein …</p>`);
-      p.innerHTML = `<p><b>Fertig:</b> ${r.files} Dateien und ${r.cards} Karten übernommen.${r.missing.length ? ` ${r.missing.length} Karten zeigen auf fehlende Ordner.` : ""}</p>`;
-    } catch (err) { p.innerHTML = ""; throw err; } finally { b.disabled = false; }
-  });
 
   // System
   $("#s-update").onclick = run(async (e) => { const b = e.currentTarget; b.disabled = true; try { const r = await api("/api/system", { action: "update" }); toast(r.changed ? "Update eingespielt – die Box startet neu" : "Die Box ist auf dem neuesten Stand"); } finally { b.disabled = false; } });

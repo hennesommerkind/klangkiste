@@ -7,6 +7,7 @@ from pathlib import Path
 AUDIO = {".mp3", ".m4a", ".m4b", ".aac", ".ogg", ".oga", ".opus", ".flac", ".wav", ".wma"}
 IMAGES = {".jpg", ".jpeg", ".png", ".webp"}
 COVER_NAMES = ("cover", "folder", "front", "album")
+CATEGORIES = ("Hörspiele", "Musik")
 
 
 class LibraryError(ValueError):
@@ -28,6 +29,17 @@ def _natural(s):
 class Library:
     def __init__(self, root):
         self.root = Path(root).resolve()
+        for c in CATEGORIES:
+            (self.root / c).mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def is_category(rel):
+        return str(rel or "").strip("/") in CATEGORIES
+
+    @staticmethod
+    def is_music(rel):
+        rel = str(rel or "").strip("/")
+        return rel == "Musik" or rel.startswith("Musik/")
 
     def path(self, rel, must_exist=True):
         """Löst einen relativen Pfad sicher innerhalb des Musikordners auf."""
@@ -64,14 +76,33 @@ class Library:
                 continue
             tracks = [f for f in filenames if Path(f).suffix.lower() in AUDIO]
             size = sum((d / f).stat().st_size for f in tracks)
+            if self.is_category(self.rel(d)):
+                continue
             out.append({
                 "name": self.rel(d),
                 "tracks": len(tracks),
                 "size": size,
-                "cover": self.find_cover(d) is not None or bool(tracks),
+                "cover": True,
                 "subfolders": len(dirnames),
             })
         out.sort(key=lambda f: _natural(f["name"]))
+        for f in out:  # Titel einschließlich Unterordnern
+            pre = f["name"] + "/"
+            f["total_tracks"] = f["tracks"] + sum(g["tracks"] for g in out if g["name"].startswith(pre))
+        return out
+
+    def all_files(self, folder):
+        """Alle Titel eines Ordners samt Unterordnern in natürlicher Reihenfolge."""
+        d = self.path(folder)
+        out = []
+
+        def walk(x):
+            out.extend(self.rel(f) for f in self._audio_files(x))
+            for sub in sorted((y for y in x.iterdir() if y.is_dir() and not y.name.startswith(".")),
+                              key=lambda y: _natural(y.name)):
+                walk(sub)
+
+        walk(d)
         return out
 
     def tracks(self, folder):
@@ -89,6 +120,8 @@ class Library:
         src = self.path(folder)
         if src == self.root or not src.is_dir():
             raise LibraryError("Ordner nicht gefunden")
+        if self.is_category(self.rel(src)):
+            raise LibraryError("„Hörspiele“ und „Musik“ können nicht umbenannt werden")
         dst = src.parent / clean_name(new_name)
         if dst.exists():
             raise LibraryError("Diesen Namen gibt es schon")
@@ -99,7 +132,27 @@ class Library:
         p = self.path(folder)
         if p == self.root or not p.is_dir():
             raise LibraryError("Ordner nicht gefunden")
+        if self.is_category(self.rel(p)):
+            raise LibraryError("„Hörspiele“ und „Musik“ können nicht gelöscht werden")
         shutil.rmtree(p)
+
+    def move(self, folder, parent):
+        """Verschiebt einen Ordner in einen anderen (z. B. Folge in eine Serie)."""
+        src = self.path(folder)
+        if src == self.root or not src.is_dir() or self.is_category(self.rel(src)):
+            raise LibraryError("Dieser Ordner kann nicht verschoben werden")
+        dst_parent = self.path(parent)
+        if not dst_parent.is_dir() or dst_parent == self.root:
+            raise LibraryError("Ziel nicht gefunden")
+        if dst_parent == src or src in dst_parent.parents:
+            raise LibraryError("Ein Ordner kann nicht in sich selbst verschoben werden")
+        dst = dst_parent / src.name
+        if dst == src:
+            return self.rel(src)
+        if dst.exists():
+            raise LibraryError("Im Ziel gibt es schon einen Ordner mit diesem Namen")
+        src.rename(dst)
+        return self.rel(dst)
 
     def delete_file(self, folder, file):
         p = self.path(folder) / clean_name(file)
@@ -129,8 +182,9 @@ class Library:
             raise LibraryError(f"Dateityp nicht unterstützt: {name}")
         return d / name
 
-    def cover_bytes(self, folder):
-        """Cover als (bytes|Path, mime). Erst Bilddatei, dann eingebettetes Bild."""
+    def cover_bytes(self, folder, _depth=0):
+        """Cover als (bytes|Path, mime). Erst Bilddatei, dann eingebettetes Bild,
+        bei Serien ohne eigenes Bild das Cover der ersten Folge."""
         d = self.path(folder)
         img = self.find_cover(d)
         if img:
@@ -157,6 +211,13 @@ class Library:
                     return bytes(c), "image/png" if getattr(c, "imageformat", 13) == 14 else "image/jpeg"
             except Exception:
                 continue
+        if _depth < 3:
+            subs = sorted((y for y in d.iterdir() if y.is_dir() and not y.name.startswith(".")),
+                          key=lambda y: _natural(y.name))
+            for sub in subs[:3]:
+                data, mime = self.cover_bytes(self.rel(sub), _depth + 1)
+                if data is not None:
+                    return data, mime
         return None, None
 
     def set_cover(self, folder, data, suffix):

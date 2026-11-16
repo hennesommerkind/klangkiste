@@ -38,7 +38,7 @@ def handle(cmd, a):
     if cmd == "clear": q.clear(); S["state"] = "stop"; S["song"] = 0
     elif cmd == "add":
         fs = files(a[0])
-        if not fs: return "ACK [50@0] {add} No such directory"
+        if not fs or not os.path.exists(os.path.join(ROOT, a[0])) and "://" not in a[0]: return "ACK [50@0] {add} No such directory"
         q.extend(fs)
     elif cmd == "play":
         if not q: return "ACK [2@0] {play} Bad song index"
@@ -63,11 +63,25 @@ def handle(cmd, a):
 
 async def client(r, w):
     w.write(b"OK MPD 0.23.5\n")
+    batch = None
     while True:
         line = await r.readline()
         if not line: break
         parts = shlex.split(line.decode())
         if not parts: continue
+        if parts[0] in ("command_list_ok_begin", "command_list_begin"):
+            batch = []; continue
+        if parts[0] == "command_list_end":
+            out = ""
+            for p in batch:
+                res = handle(p[0], p[1:])
+                if isinstance(res, str): out += res + "\n"; break
+                out += "".join(x + "\n" for x in res) + "list_OK\n"
+            else:
+                out += "OK\n"
+            batch = None; w.write(out.encode()); await w.drain(); continue
+        if batch is not None:
+            batch.append(parts); continue
         res = handle(parts[0], parts[1:])
         if isinstance(res, str): w.write((res + "\n").encode())
         else: w.write(("".join(x + "\n" for x in res) + "OK\n").encode())

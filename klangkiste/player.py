@@ -10,7 +10,9 @@ STREAM_OUTPUT = "Hausstream"
 
 
 class Player:
-    def __init__(self, store, host="127.0.0.1", port=6600, on_change=None):
+    def __init__(self, store, host="127.0.0.1", port=6600, on_change=None, files_for=None, resumable=None):
+        self.files_for = files_for            # Ordner -> Titelliste in richtiger Reihenfolge
+        self.resumable = resumable or (lambda folder: True)  # Hörspiel ja, Musik nein
         self.store = store
         self.host, self.port = host, port
         self.on_change = on_change or (lambda s: None)
@@ -118,7 +120,8 @@ class Player:
         folder = s.get("folder")
         if not self.store.config["audio"]["resume"]:
             return
-        active = s["state"] in ("play", "pause") and folder is not None and not s.get("random")
+        active = (s["state"] in ("play", "pause") and folder is not None and not s.get("random")
+                  and self.resumable(folder))
         if active and (s["tracks"] > 1 or s["duration"] > 600):
             self.store.resume[folder] = {"pos": s["track"] - 1, "elapsed": int(s["elapsed"])}
             if s["state"] == "pause" and prev.get("state") == "play":
@@ -145,12 +148,27 @@ class Player:
     def play_folder(self, folder, shuffle=False, restart=False):
         cfg = self.store.config["audio"]
         self._save_resume(force=True)
-        r = None if (restart or shuffle or not cfg["resume"]) else self.store.resume.get(folder)
+        if restart or shuffle or not cfg["resume"] or not self.resumable(folder):
+            r = None
+        else:
+            r = self.store.resume.get(folder)
+        files = self.files_for(folder) if self.files_for else None
 
         def go(c):
             c.clear()
             c.random(1 if shuffle else 0)
-            c.add(folder)
+            added = False
+            if files:
+                try:  # einzeln hinzufügen: MPD sortiert sonst „Folge 10“ vor „Folge 2“
+                    c.command_list_ok_begin()
+                    for f in files:
+                        c.add(f)
+                    c.command_list_end()
+                    added = True
+                except mpd.CommandError:
+                    c.clear()
+            if not added:
+                c.add(folder)
             n = int(c.status().get("playlistlength", 0))
             if n == 0:
                 raise ValueError(f"Ordner „{folder}“ enthält keine Titel")

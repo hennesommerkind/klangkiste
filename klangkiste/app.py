@@ -15,7 +15,6 @@ from . import __version__, system
 from .backup import Backup, BackupError
 from .buttons import Buttons
 from .config import BUTTON_ACTIONS, BUTTON_PINS, Store
-from .importer import import_legacy
 from .library import IMAGES, Library, LibraryError
 from .mqtt import Mqtt
 from .player import Player
@@ -36,7 +35,9 @@ class Box:
         self.mock = args.mock
         self.store = Store(args.data)
         self.library = Library(self.store.music)
-        self.player = Player(self.store, args.mpd_host, args.mpd_port, self._on_player)
+        self.player = Player(self.store, args.mpd_host, args.mpd_port, self._on_player,
+                             files_for=self.library.all_files,
+                             resumable=lambda f: not self.library.is_music(f))
         self.buttons = Buttons(self.store, self.dispatch_threadsafe)
         self.mqtt = Mqtt(self.store, self._mqtt_cmd, self.full_state, __version__)
         self.backup = None
@@ -203,8 +204,8 @@ class Box:
     def on_card(self, main, alts):
         cards = self.store.cards
         key = next((k for k in [main, *alts] if k in cards), None)
-        log.info("Karte aufgelegt: %s (%s)", main, "bekannt" if key else "unbekannt")
         if self.learn and time.monotonic() < self.learn["until"]:
+            log.info("Karte angelernt: %s", main)
             spec, self.learn = self.learn["spec"], None
             for k in [main, *alts]:
                 cards.pop(k, None)
@@ -212,20 +213,16 @@ class Box:
             self.store.save_cards()
             self.emit("learned", {"id": main, **spec})
             return
+        log.info("Karte aufgelegt: %s (%s)", main, "bekannt" if key else "unbekannt")
         self.mqtt.publish_card(main, bool(key))
         if not key:
             self.last_unknown = main
             self.emit("card", {"id": main, "known": False})
             return
-        if key != main:  # importierte Karte auf neue Schreibweise umstellen
-            card = cards.pop(key)
-            card.pop("legacy", None)
-            cards[main] = card
-            self.store.save_cards()
-        card = cards[main]
-        self.emit("card", {"id": main, "known": True, **card})
+        card = cards[key]
+        self.emit("card", {"id": key, "known": True, **card})
         try:
-            self._run_card(main, card)
+            self._run_card(key, card)
         except Exception as e:
             log.warning("Karte %s: %s", main, e)
             self.toast(str(e))
@@ -391,6 +388,17 @@ async def api_rename(request):
         old = d["folder"].strip("/")
         new = b.library.rename(old, d["name"])
         _retarget(b, old, new)
+    await asyncio.to_thread(b.player.update_db)
+    return ok({"name": new})
+
+
+@routes.post("/api/library/move")
+async def api_move(request):
+    d = await request.json()
+    b = box(request)
+    old = d["folder"].strip("/")
+    new = b.library.move(old, d["parent"])
+    _retarget(b, old, new)
     await asyncio.to_thread(b.player.update_db)
     return ok({"name": new})
 
@@ -690,35 +698,6 @@ async def api_backup_upload(request):
     data = await part.read(decode=False)
     box(request).backup.apply_archive(bytes(data))
     return ok()
-
-
-@routes.post("/api/import/legacy")
-async def api_import(request):
-    b = box(request)
-    reader = await request.multipart()
-    part = await reader.next()
-    if part is None:
-        raise ValueError("Keine Datei erhalten")
-    tmp = b.store.dir / "import-upload.tar"
-    try:
-        with open(tmp, "wb") as f:
-            while True:
-                chunk = await part.read_chunk(1024 * 512)
-                if not chunk:
-                    break
-                f.write(chunk)
-        try:
-            stats = await asyncio.to_thread(import_legacy, tmp, b.store)
-        except (OSError, EOFError) as e:
-            raise ValueError(f"Das Archiv konnte nicht gelesen werden: {e}")
-        except Exception as e:
-            if type(e).__name__ in ("ReadError", "TarError", "BadGzipFile"):
-                raise ValueError("Das ist kein gültiges tar-Archiv")
-            raise
-    finally:
-        tmp.unlink(missing_ok=True)
-    await asyncio.to_thread(b.player.update_db)
-    return ok(stats)
 
 
 # ---------- System ----------

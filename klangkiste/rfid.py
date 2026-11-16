@@ -1,8 +1,7 @@
 """RFID-Leser MFRC522 (RC522) über SPI – eigener, schlanker Treiber.
 
 Braucht nur `spidev` und einen Reset-Pin (über gpiozero). Die Karten-ID ist
-die 4-Byte-UID als Hex. Zusätzlich werden die Schreibweisen der alten
-Phoniebox berechnet, damit importierte Karten weiter funktionieren.
+die 4-Byte-UID als Hex.
 """
 import logging
 import threading
@@ -18,19 +17,8 @@ CMD_IDLE, CMD_TRANSCEIVE, CMD_SOFTRESET = 0x00, 0x0C, 0x0F
 
 
 def card_ids(uid5):
-    """Liefert (Haupt-ID, [alternative Schreibweisen]) für eine gelesene UID."""
-    b = list(uid5)
-    main = "".join(f"{x:02X}" for x in b[:4])
-    alts = [
-        "".join(str(x) for x in b),            # Phoniebox 2.x mit pirc522
-        "".join(str(x) for x in b[:4]),
-        str(int.from_bytes(bytes(b), "big")),   # SimpleMFRC522
-        str(int.from_bytes(bytes(b[:4]), "big")),
-        str(int.from_bytes(bytes(b[:4]), "little")),
-        str(int.from_bytes(bytes(b[:4]), "little")).zfill(10),  # USB-Leser
-        main.lower(),
-    ]
-    return main, [a for a in dict.fromkeys(alts) if a != main]
+    """Liefert (ID, []) für eine gelesene UID; die ID ist die UID als Hex."""
+    return "".join(f"{x:02X}" for x in list(uid5)[:4]), []
 
 
 class MFRC522:
