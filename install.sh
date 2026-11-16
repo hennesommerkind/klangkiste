@@ -52,8 +52,10 @@ sed "s/CARDNAME/$SOUND_CARD/g" "$APP/system/asound.conf" > /etc/asound.conf
 
 say "Abspieler (MPD) einrichten"
 install -m 644 "$APP/system/mpd.conf" /etc/mpd.conf
-systemctl disable --now mpd.socket 2>/dev/null || true   # sonst wäre MPD im ganzen Netz offen
 systemctl enable mpd.service
+# Erst danach maskieren: "enable mpd.service" schaltet den Socket sonst wieder ein,
+# und über den Socket wäre MPD im ganzen Heimnetz erreichbar.
+systemctl mask --now mpd.socket 2>/dev/null || true
 systemctl restart mpd.service || true
 
 say "Protokolle begrenzen (die alte Box lief damit voll)"

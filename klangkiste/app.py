@@ -69,7 +69,7 @@ class Box:
                 self.reader = MFRC522(cfg["spi_bus"], cfg["spi_device"], cfg["rst_pin"])
                 v = self.reader.version()
                 if v in (0x00, 0xFF):
-                    self.reader_error = "Kartenleser antwortet nicht (Verkabelung/SPI prüfen)"
+                    self.reader_error = f"Kartenleser antwortet nicht (Kennung 0x{v:02X}) – Verkabelung/Reset-Pin prüfen"
                     log.warning(self.reader_error)
             except Exception as e:
                 self.reader_error = f"Kartenleser nicht verfügbar: {e}"
