@@ -269,7 +269,7 @@ const cardDialog = run(async (id = null, card = null) => {
     <div class="actions"><button class="btn" id="cc">Abbrechen</button><button class="btn primary" id="cs">${card ? "Speichern" : id ? "Zuweisen" : "Weiter"}</button></div>`);
   const ct = $("#ct", dialog); ct.value = t;
   if (card) { if (t === "folder") $("#cfolder", dialog).value = card.target; if (t === "url") $("#curl", dialog).value = card.target; if (t === "command") $("#ccmd", dialog).value = card.target; $("#cshuffle", dialog).checked = !!card.shuffle; $("#clabel", dialog).value = card.label || ""; }
-  const show = () => { const v = ct.value; $("#f-folder", dialog).hidden = $("#f-shuffle", dialog).hidden = v !== "folder"; $("#f-shuffle", dialog).style.display = v === "folder" ? "" : "none"; $("#f-url", dialog).hidden = $("#f-url2", dialog).hidden = v !== "url"; $("#f-cmd", dialog).hidden = v !== "command"; };
+  const show = () => { const v = ct.value; $("#f-folder", dialog).hidden = $("#f-shuffle", dialog).hidden = v !== "folder"; $("#f-url", dialog).hidden = $("#f-url2", dialog).hidden = v !== "url"; $("#f-cmd", dialog).hidden = v !== "command"; };
   ct.onchange = show; show();
   $("#cc", dialog).onclick = closeDialog;
   $("#cs", dialog).onclick = run(async () => {
