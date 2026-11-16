@@ -1,0 +1,17 @@
+# Von Klangkiste verwaltet – wird bei jedem Update überschrieben.
+device_name: Klangkiste
+device_type: speaker
+audio_backend: alsa
+audio_device: default
+bitrate: 160
+volume_steps: 100
+initial_volume: 50
+zeroconf_enabled: true
+zeroconf_backend: avahi
+credentials:
+  type: zeroconf
+# Lokale Steuerschnittstelle für die Knöpfe der Klangkiste (nur auf der Box erreichbar)
+server:
+  enabled: true
+  address: localhost
+  port: 3678

@@ -180,3 +180,10 @@ details.card[open] > summary { margin-bottom: 16px; }
 .choice:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, transparent); }
 .choice input { accent-color: var(--accent); width: 20px; height: 20px; margin: 2px 0 0; flex: none; }
 .list .cover { font-size: .95rem; border-radius: 10px; }
+
+/* Spotify-Cover, Update-Punkt */
+.cover.spotify { --c: #1db954; color: #fff; }
+.cover.spotify img { z-index: 1; }
+#nav button { position: relative; }
+#nav button.dot::after { content: ""; position: absolute; top: 9px; left: calc(50% + 8px); width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--surface); }
+@media (min-width: 860px) { #nav button.dot::after { top: 50%; left: auto; right: 14px; transform: translateY(-50%); } }

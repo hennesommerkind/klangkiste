@@ -1,0 +1,14 @@
+[Unit]
+Description=Spotify Connect (go-librespot) für die Klangkiste
+After=network-online.target sound.target avahi-daemon.service
+Wants=network-online.target
+
+[Service]
+User=klangkiste
+Group=klangkiste
+ExecStart=/usr/local/bin/go-librespot -config_dir /var/lib/klangkiste/spotify
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

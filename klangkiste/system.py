@@ -1,11 +1,20 @@
 """Systemfunktionen: Infos, Neustart, Ausschalten, Update."""
 import asyncio
-import shutil
+import datetime as dt
+import json
+import re
 import socket
 import subprocess
+import urllib.request
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+UPDATE_LOG = Path("/var/lib/klangkiste/update.log")
+
+
+def _git(*args):
+    # Das Programmverzeichnis gehört root; safe.directory erlaubt das Lesen.
+    return _run("git", "-c", f"safe.directory={REPO}", "-C", str(REPO), *args)
 
 
 def _run(*cmd, timeout=10):
@@ -39,12 +48,13 @@ def info(version):
         pass
     return {
         "version": version,
-        "revision": _run("git", "-C", str(REPO), "rev-parse", "--short", "HEAD"),
+        "revision": _git("rev-parse", "--short", "HEAD"),
+        "revision_date": _git("log", "-1", "--format=%cd", "--date=format:%d.%m.%Y"),
         "hostname": socket.gethostname(),
         "ip": ip_address(),
         "temperature": temp,
         "model": model,
-        "spotify": bool(shutil.which("librespot")),
+        "update_log": _tail(UPDATE_LOG, 12),
     }
 
 
@@ -62,16 +72,44 @@ async def power(action, mock=False):
                 *(["klangkiste"] if action == "restart" else []))
 
 
-async def update(mock=False):
-    """Holt die neueste Version von GitHub und startet den Dienst neu."""
-    proc = await asyncio.create_subprocess_exec(
-        "git", "-C", str(REPO), "pull", "--ff-only",
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-    out, _ = await proc.communicate()
-    text = out.decode("utf-8", "replace").strip()
-    if proc.returncode != 0:
-        raise RuntimeError(text[-400:] or "Update fehlgeschlagen")
-    changed = "Already up to date" not in text and "Bereits aktuell" not in text
-    if changed and not mock:
-        asyncio.get_running_loop().call_later(1.0, lambda: asyncio.ensure_future(power("restart")))
-    return {"changed": changed, "log": text[-400:]}
+def _tail(path, n):
+    try:
+        return "\n".join(Path(path).read_text("utf-8", "replace").strip().splitlines()[-n:])
+    except OSError:
+        return ""
+
+
+def _github_repo():
+    url = _git("config", "--get", "remote.origin.url")
+    m = re.search(r"github\.com[:/]([^/]+)/([^/.]+)", url)
+    return (m.group(1), m.group(2)) if m else (None, None)
+
+
+def _compare(owner, repo, head):
+    req = urllib.request.Request(f"https://api.github.com/repos/{owner}/{repo}/compare/{head}...main",
+                                 headers={"Accept": "application/vnd.github+json", "User-Agent": "klangkiste"})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        return json.load(r)
+
+
+async def check_updates():
+    """Fragt GitHub, ob es neuere Versionen gibt, und liefert die Änderungen."""
+    head = _git("rev-parse", "HEAD")
+    owner, repo = _github_repo()
+    if not head or not owner:
+        raise RuntimeError("Kein Git-Repository gefunden")
+    d = await asyncio.to_thread(_compare, owner, repo, head)
+    commits = d.get("commits", [])
+    changes = [c["commit"]["message"].splitlines()[0] for c in reversed(commits)]
+    return {"available": d.get("ahead_by", 0) > 0, "count": d.get("ahead_by", 0), "changes": changes[:15],
+            "checked": dt.datetime.now().isoformat(timespec="minutes")}
+
+
+async def start_update(mock=False):
+    """Startet den Update-Dienst (läuft als root, holt die neue Version und
+    spielt auch Systemänderungen ein; die Klangkiste startet danach neu)."""
+    if mock:
+        return
+    code, out = await _sudo("systemctl", "start", "--no-block", "klangkiste-update.service")
+    if code != 0:
+        raise RuntimeError("Update konnte nicht gestartet werden – bitte einmal install.sh erneut ausführen. " + out[-200:])

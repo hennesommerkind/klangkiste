@@ -7,7 +7,10 @@ einrichten, sichern.
 - **Weboberfläche** fürs Handy und den Computer: Musikverwaltung mit Upload, Cover, Karten
 - **Knöpfe ohne Aufschrauben**: Anlernmodus erkennt, an welchem GPIO ein Knopf hängt
 - **MQTT** mit automatischer Erkennung in Home Assistant
-- **Im Haus hören**: MP3-Stream für MusicCast (über Home Assistant), Spotify Connect
+- **Im Haus hören**: MP3-Stream für MusicCast (über Home Assistant)
+- **Spotify Connect** (go-librespot): Spotify pausiert die Figur und gibt danach an sie zurück,
+  die Knöpfe steuern immer die Quelle, die zuletzt gespielt hat
+- **Update-Knopf** in der Oberfläche: holt die neue Version und spielt auch Systemänderungen ein
 - **Sicherung** zu IONOS HiDrive auf Knopfdruck oder nach Zeitplan, mit Wiederherstellung
 - **Hörspiele und Musik getrennt**, Serien mit Folgen als Unterordner
 - **Kartenmodus** „Auflegen und liegen lassen“ (wegnehmen = Pause) oder „Antippen“
@@ -66,9 +69,13 @@ Befehle an `klangkiste/cmd/…`: `play_pause`, `play`, `pause`, `next`, `prev`, 
 - `web/` – Oberfläche ohne Build-Schritt (HTML, CSS, JavaScript)
 - `system/` – Vorlagen für MPD, ALSA, systemd
 - Daten liegen in `/var/lib/klangkiste` (Musik, `config.json`, `cards.json`)
-- Protokoll ansehen: `journalctl -u klangkiste -e`
-- Test ohne Hardware: `python3 tests/fake_mpd.py /tmp/kk/music 6611 &` und
-  `python3 -m klangkiste --mock --data /tmp/kk --port 8099 --mpd-port 6611`
+- Protokoll ansehen: `journalctl -u klangkiste -e`, Spotify: `journalctl -u go-librespot -e`
+- Updates: Einstellungen › System › „Jetzt aktualisieren“ startet `klangkiste-update.service`
+  (root), der `/opt/klangkiste` aus GitHub aktualisiert und `install.sh --update` ausführt.
+  Das Programmverzeichnis gehört root, der Dienst `klangkiste` kann seinen Code nicht ändern.
+- Test ohne Hardware: `python3 tests/fake_mpd.py /tmp/kk/music 6611 &`,
+  `python3 tests/fake_librespot.py 3699 &` und
+  `python3 -m klangkiste --mock --data /tmp/kk --port 8099 --mpd-port 6611 --spotify-url http://127.0.0.1:3699`
 
 Die Sicherungsdatei enthält die Einstellungen einschließlich der gespeicherten
 Passwörter für MQTT und HiDrive – bitte entsprechend aufbewahren.

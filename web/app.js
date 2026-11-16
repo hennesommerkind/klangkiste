@@ -92,8 +92,8 @@ function onState(s) {
   $("#brand-name").textContent = s.name || "Klangkiste"; document.title = s.name || "Klangkiste";
   const key = [s.folder, s.url, s.tracks].join("|");
   if (key !== S.queueKey) { S.queueKey = key; loadQueue(); }
-  if (S.view === "now") { if (prev.folder !== s.folder || prev.state === "offline" || s.state === "offline" || !$(".now")) viewNow(); else updateNow(); }
-  renderMini();
+  if (S.view === "now") { if (prev.folder !== s.folder || prev.controller !== s.controller || prev.cover_url !== s.cover_url || prev.state === "offline" || s.state === "offline" || !$(".now")) viewNow(); else updateNow(); }
+  renderMini(); updateDot();
 }
 async function loadQueue() { try { S.queue = await api("/api/queue"); } catch { S.queue = []; } if (S.view === "now") renderQueue(); }
 function connect() {
@@ -103,10 +103,17 @@ function connect() {
   es.addEventListener("card", (e) => { const d = JSON.parse(e.data); if (!d.known) unknownCard(d.id); else hideBanner(); if (S.view === "cards") viewCards(); });
   es.addEventListener("learned", (e) => { const d = JSON.parse(e.data); closeDialog(); toast("Karte gespeichert: " + leaf(d.target)); if (S.view !== "now") render(); });
   es.addEventListener("backup", (e) => { S.backup = JSON.parse(e.data); if (S.view === "settings") paintBackup(); });
+  es.addEventListener("update", () => { S.state.update = true; updateDot(); });
   es.onerror = () => { if (S.state.state !== "offline") onState({ ...S.state, state: "offline", lost: true }); };
 }
 setInterval(() => { if (S.view === "now" && S.state.state === "play") tick(); }, 500);
 setInterval(run(async () => { if (!document.hidden && S.state.state === "play") { S.state = await api("/api/state"); S.synced = performance.now(); } }), 15000);
+
+function updateDot() { $('#nav button[data-view="settings"]').classList.toggle("dot", !!S.state.update); }
+function nowCover(s, idle) {
+  if (s.spotify) return `<div class="cover spotify">${s.cover_url ? `<img alt="" src="${esc(s.cover_url)}" onerror="this.remove()">` : ""}<svg viewBox="0 0 24 24" width="38%" fill="currentColor"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm4.6 14.4a.6.6 0 0 1-.9.2c-2.4-1.5-5.4-1.8-9-1a.6.6 0 1 1-.3-1.2c3.9-.9 7.2-.5 9.9 1.1.3.2.4.6.3.9Zm1.2-2.7a.8.8 0 0 1-1 .3c-2.8-1.7-7-2.2-10.3-1.2a.8.8 0 1 1-.4-1.5c3.8-1.1 8.4-.6 11.5 1.3.3.2.4.7.2 1.1Zm.1-2.8C14.6 9 9.2 8.8 6.1 9.7a.9.9 0 1 1-.5-1.8c3.6-1.1 9.5-.9 13.3 1.3a.9.9 0 0 1-1 1.7Z"/></svg></div>`;
+  return cover(idle ? null : s.folder ?? "Radio", s.folder != null);
+}
 
 // ---------- Ansicht: Läuft ----------
 function viewNow() {
@@ -116,7 +123,7 @@ function viewNow() {
   }
   const idle = !s.file;
   main.innerHTML = `<div class="now">
-    <div id="np-cover">${cover(idle ? null : s.folder ?? "Radio", s.folder != null)}</div>
+    <div id="np-cover">${nowCover(s, idle)}</div>
     <div>
       <p class="muted small" id="np-folder" style="margin:0 0 4px;font-weight:700;text-transform:uppercase;letter-spacing:.06em"></p>
       <h1 id="np-title"></h1><p class="muted" id="np-sub"></p>
@@ -128,7 +135,8 @@ function viewNow() {
         <button aria-label="Weiter" data-a="next">${ICON.next}</button>
       </div>
       <div class="vol">${ICON.vol}<input type="range" id="np-vol" min="0" max="100" aria-label="Lautstärke"><b id="np-volv"></b></div>
-      <label class="switch" style="margin-top:14px"><span><b>Im Haus streamen</b><br><span class="muted small">Stellt den Ton für MusicCast bereit</span></span><input type="checkbox" id="np-stream"></label>
+      ${s.spotify ? `<p class="muted small" style="margin-top:14px">Läuft über Spotify. Die Knöpfe an der Box steuern jetzt Spotify; eine aufgelegte Figur übernimmt wieder.</p>` : ""}
+      <label class="switch" style="margin-top:14px" ${s.spotify ? "hidden" : ""}><span><b>Im Haus streamen</b><br><span class="muted small">Stellt den Ton für MusicCast bereit</span></span><input type="checkbox" id="np-stream"></label>
     </div></div>
     <div class="card" style="max-width:880px;margin:28px auto 0" id="np-queue-card" hidden><h2>Titel</h2><ol class="queue" id="np-queue"></ol></div>`;
   $$(".controls button").forEach((b) => b.onclick = () => act(b.dataset.a));
@@ -144,7 +152,7 @@ function updateNow() {
   const idle = !s.file;
   $("#np-folder").textContent = idle ? "" : s.spotify ? "Spotify" : s.url ? "Radio" : pretty((s.folder || "").replace(/^(Hörspiele|Musik)\//, ""));
   $("#np-title").textContent = idle ? "Nichts ausgewählt" : s.title;
-  $("#np-sub").textContent = idle ? "Leg eine Karte auf oder wähle etwas unter „Musik“." : [s.artist, s.tracks > 1 ? `Titel ${s.track} von ${s.tracks}` : ""].filter(Boolean).join(" · ");
+  $("#np-sub").textContent = idle ? "Leg eine Karte auf oder wähle etwas unter „Musik“." : [s.artist, s.album && s.spotify ? s.album : "", s.tracks > 1 ? `Titel ${s.track} von ${s.tracks}` : ""].filter(Boolean).join(" · ");
   $("#np-play").innerHTML = s.state === "play" ? ICON.pause : ICON.play;
   const vol = $("#np-vol");
   if (!S.volBusy || Date.now() - S.volBusy > 1500) { vol.max = S.cfg?.audio.volume_max || 100; vol.value = s.volume; $("#np-volv").textContent = s.volume; vol.style.setProperty("--p", (s.volume / vol.max * 100) + "%"); }
@@ -159,7 +167,7 @@ function tick() {
 }
 function renderQueue() {
   const card = $("#np-queue-card"); if (!card) return;
-  card.hidden = S.queue.length < 2;
+  card.hidden = S.queue.length < 2 || S.state.spotify;
   $("#np-queue").innerHTML = S.queue.map((q, i) => `<li class="${i === S.state.track - 1 ? "current" : ""}" data-i="${i}"><span>${esc(q.title)}</span><small>${q.duration ? fmt(q.duration) : ""}</small></li>`).join("");
   $$("#np-queue li").forEach((li) => li.onclick = () => act("jump", +li.dataset.i));
 }
@@ -167,7 +175,7 @@ function renderMini() {
   const m = $("#mini"), s = S.state;
   if (S.view === "now" || !s.file || s.state === "offline" || s.state === "stop") { m.hidden = true; return; }
   m.hidden = false;
-  m.innerHTML = `<div class="bar">${cover(s.folder ?? "Radio", s.folder != null)}<div class="t"><b>${esc(s.title)}</b><span>${esc(pretty((s.folder || "").replace(/^(Hörspiele|Musik)\//, "")))}</span></div><button aria-label="Play/Pause">${s.state === "play" ? ICON.pause : ICON.play}</button></div>`;
+  m.innerHTML = `<div class="bar">${nowCover(s, false)}<div class="t"><b>${esc(s.title)}</b><span>${esc(s.spotify ? "Spotify" + (s.artist ? " · " + s.artist : "") : pretty((s.folder || "").replace(/^(Hörspiele|Musik)\//, "")))}</span></div><button aria-label="Play/Pause">${s.state === "play" ? ICON.pause : ICON.play}</button></div>`;
   $(".bar", m).onclick = () => go("now");
   $("button", m).onclick = (e) => { e.stopPropagation(); act("play_pause"); };
 }
@@ -375,7 +383,10 @@ const viewSettings = run(async () => {
     <p class="small muted">Adresse des Streams:</p><pre id="h-url">${esc(sys.stream_url)}</pre>
     <p class="small muted">Skript für Home Assistant:</p><pre id="h-ha">lädt …</pre>
     <button class="btn small" id="h-copy">Skript kopieren</button>
-    <h2 style="margin-top:22px">Spotify</h2><p>${sys.spotify ? `Die Box erscheint in der Spotify-App als Lautsprecher „Klangkiste“ (Spotify Premium nötig). Startet dort Musik, pausiert die Karte automatisch.` : "Spotify Connect ist auf dieser Box nicht installiert. Das Installationsskript richtet es mit ein."}</p>`)}
+    <h2 style="margin-top:22px">Spotify</h2>
+    <div class="status-line"><span class="pill ${sys.spotify ? "ok" : "bad"}">${sys.spotify ? "Spotify Connect bereit" : "Spotify Connect nicht erreichbar"}</span></div>
+    <p>Die Box erscheint in der Spotify-App als Lautsprecher „Klangkiste“ (Spotify Premium nötig). So arbeiten Spotify und die Figuren zusammen:</p>
+    <ul class="small" style="margin:0 0 8px;padding-left:20px;line-height:1.6"><li>Startet Spotify, pausiert die laufende Figur.</li><li>Trennst du Spotify am Handy oder wählst ein anderes Gerät, läuft die Figur an derselben Stelle weiter (wenn sie noch auf der Box steht).</li><li>Die Knöpfe steuern immer, was zuletzt gespielt hat: Spotify oder die Figur.</li><li>Eine aufgelegte Figur gewinnt und pausiert Spotify.</li></ul>`)}
   ${sec("mqtt", "MQTT / Home Assistant", `
     <div class="status-line"><span class="pill ${c.mqtt.connected ? "ok" : cfg.mqtt.enabled ? "bad" : ""}">${c.mqtt.connected ? "Verbunden" : cfg.mqtt.enabled ? "Nicht verbunden" : "Aus"}</span>${c.mqtt.error ? `<span class="small muted">${esc(c.mqtt.error)}</span>` : ""}</div>
     ${sw("m-on", "MQTT einschalten", cfg.mqtt.enabled)}
@@ -401,7 +412,7 @@ const viewSettings = run(async () => {
     <h2 style="margin-top:22px">Ohne HiDrive</h2><p class="muted small">Einstellungen und Karten (ohne Musik) als Datei auf dieses Gerät laden oder von dort zurückspielen.</p>
     <div class="row wrap"><a class="btn" href="/api/backup/download" download>Herunterladen</a><button class="btn" id="k-up">Datei zurückspielen</button><input type="file" id="k-file" accept=".gz,.tar,.tgz" hidden></div>`)}
   ${sec("system", "System", `<ul class="list">
-      <li><div class="grow"><b>Version</b><span>${esc(sys.version)}${sys.revision ? " · " + esc(sys.revision) : ""}${sys.mock ? " · Simulationsmodus" : ""}</span></div><button class="btn small" id="s-update">Nach Updates suchen</button></li>
+      <li style="display:block"><div class="row"><div class="grow"><b>Software</b><span>Version ${esc(sys.version)}${sys.revision ? " · Stand " + esc(sys.revision) : ""}${sys.revision_date ? " vom " + esc(sys.revision_date) : ""}${sys.mock ? " · Simulationsmodus" : ""}</span></div></div><div id="upd"></div></li>
       <li><div class="grow"><b>Adresse</b><span>http://${esc(sys.ip || sys.hostname)} · ${esc(sys.hostname)}</span></div></li>
       <li><div class="grow"><b>Speicher</b><span>${size(sys.disk.free)} von ${size(sys.disk.total)} frei</span></div></li>
       ${sys.temperature ? `<li><div class="grow"><b>Temperatur</b><span>${String(sys.temperature).replace(".", ",")} °C</span></div></li>` : ""}
@@ -464,9 +475,34 @@ const viewSettings = run(async () => {
   paintBackup();
 
   // System
-  $("#s-update").onclick = run(async (e) => { const b = e.currentTarget; b.disabled = true; try { const r = await api("/api/system", { action: "update" }); toast(r.changed ? "Update eingespielt – die Box startet neu" : "Die Box ist auf dem neuesten Stand"); } finally { b.disabled = false; } });
+  paintUpdate(sys.update_info || {}, sys);
   $$("[data-p]").forEach((b) => b.onclick = run(async () => { const a = b.dataset.p; if (await ask(a === "reboot" ? "Box neu starten?" : "Box ausschalten?", a === "reboot" ? "Die Wiedergabe stoppt, nach etwa einer Minute ist die Box wieder da." : "Zum Einschalten musst du danach kurz den Strom trennen.", a === "reboot" ? "Neu starten" : "Ausschalten", a !== "reboot")) { await api("/api/system", { action: a }); toast(a === "reboot" ? "Die Box startet neu …" : "Die Box schaltet sich aus …"); } }));
 });
+function paintUpdate(u, sys) {
+  const el = $("#upd"); if (!el) return;
+  const when = u.checked ? new Date(u.checked).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" }) : "";
+  el.innerHTML = u.available
+    ? `<div class="status-line" style="margin-top:10px"><span class="pill accent">${u.count === 1 ? "1 Update" : u.count + " Updates"} verfügbar</span></div>
+       <ul class="small" style="margin:0 0 10px;padding-left:20px;line-height:1.6">${(u.changes || []).map((c) => `<li>${esc(c)}</li>`).join("")}</ul>
+       <button class="btn primary" id="u-go">Jetzt aktualisieren</button>`
+    : `<div class="row wrap" style="margin-top:10px"><span class="small muted grow">${when ? "Auf dem neuesten Stand (geprüft " + when + ")" : "Noch nicht geprüft"}</span><button class="btn small" id="u-check">Nach Updates suchen</button></div>`;
+  if (sys.update_log) el.insertAdjacentHTML("beforeend", `<details style="margin-top:10px"><summary class="small muted" style="cursor:pointer">Protokoll des letzten Updates</summary><pre>${esc(sys.update_log)}</pre></details>`);
+  const c = $("#u-check");
+  if (c) c.onclick = run(async () => { c.disabled = true; c.textContent = "Suche …"; try { const r = await api("/api/system", { action: "check_update" }); S.state.update = r.available; updateDot(); paintUpdate(r, sys); if (!r.available) toast("Die Box ist auf dem neuesten Stand"); } finally { if (c.isConnected) { c.disabled = false; c.textContent = "Nach Updates suchen"; } } });
+  const g = $("#u-go");
+  if (g) g.onclick = run(async () => {
+    if (!await ask("Jetzt aktualisieren?", "Die Box holt die neue Version und startet danach neu. Die Wiedergabe stoppt dabei kurz. Das dauert ein bis zwei Minuten.", "Aktualisieren")) return;
+    await api("/api/system", { action: "update" });
+    openDialog(`<h2>Update läuft …</h2><div class="pulse"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-3-6.7M21 4v5h-5"/></svg></div><p style="text-align:center">Die Box holt die neue Version und startet neu.<br><span class="muted small">Diese Seite lädt sich danach von selbst neu.</span></p>`);
+    const before = sys.revision, start = Date.now();
+    const poll = async () => {
+      try { const n = await api("/api/system"); if (n.revision && n.revision !== before) { location.reload(); return; } } catch {}
+      if (Date.now() - start > 10 * 60000) { closeDialog(); toast("Das Update dauert ungewöhnlich lange – Protokoll unter System ansehen", "error"); return; }
+      setTimeout(poll, 3000);
+    };
+    setTimeout(poll, 8000);
+  });
+}
 function paintBackup() {
   const el = $("#bk-status"), b = S.backup || {}; if (!el) return;
   const when = (t) => t ? new Date(t).toLocaleString("de-DE", { dateStyle: "medium", timeStyle: "short" }) : "";

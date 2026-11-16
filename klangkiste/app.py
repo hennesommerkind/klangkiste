@@ -19,6 +19,10 @@ from .library import IMAGES, Library, LibraryError
 from .mqtt import Mqtt
 from .player import Player
 from .rfid import CardWatcher, MockReader
+from .spotify import Spotify
+
+# Befehle, die bei laufendem Spotify an Spotify gehen
+SPOTIFY_ACTIONS = {"play_pause", "play", "pause", "stop", "next", "prev", "seek", "volume", "vol_up", "vol_down"}
 
 log = logging.getLogger("klangkiste")
 # Nicht auf die Systemtabelle verlassen: falsche Typen lassen Browser
@@ -46,7 +50,10 @@ class Box:
         self.learn = None
         self.active_card = None
         self.last_unknown = None
-        self.spotify = False
+        self.spotify = Spotify(self._on_spotify, args.spotify_url)
+        self.controller = "box"          # wer gerade gesteuert wird: „box“ (Karten) oder „spotify“
+        self.resume_after_spotify = False
+        self.update_info = {}
         self.reader = None
         self.watcher = None
         self.reader_error = ""
@@ -60,7 +67,9 @@ class Box:
         await asyncio.to_thread(self._init_hardware)
         self.mqtt.start()
         app["scheduler"] = asyncio.create_task(self.backup.scheduler())
+        app["updates"] = asyncio.create_task(self._update_checker())
         asyncio.create_task(self._startup_volume())
+        self.spotify.start()
 
     def _init_hardware(self):
         try:
@@ -93,8 +102,21 @@ class Box:
                 return
             await asyncio.sleep(1)
 
+    async def _update_checker(self):
+        await asyncio.sleep(90)
+        while True:
+            try:
+                self.update_info = await system.check_updates()
+                if self.update_info.get("available"):
+                    self.emit("update", self.update_info)
+            except Exception as e:
+                log.info("Update-Prüfung: %s", e)
+            await asyncio.sleep(6 * 3600)
+
     async def stop(self, app):
         app["scheduler"].cancel()
+        app["updates"].cancel()
+        await self.spotify.stop()
         if self.watcher:
             self.watcher.stop()
         self.buttons.close()
@@ -112,7 +134,18 @@ class Box:
     # ---------- Ereignisse an die Oberfläche ----------
     def full_state(self):
         s = dict(self.player.state)
-        s.update({"card": self.active_card, "spotify": self.spotify, "name": self.store.config["name"]})
+        s.update({"card": self.active_card, "spotify": False, "cover_url": None,
+                  "controller": self.controller, "name": self.store.config["name"],
+                  "update": bool(self.update_info.get("available"))})
+        if self.controller == "spotify":
+            sp = self.spotify.info()
+            s.update({"state": "play" if sp["playing"] else "pause", "title": sp["title"] or "Spotify",
+                      "artist": sp["artist"], "album": sp["album"], "file": "spotify", "folder": None,
+                      "url": None, "track": 0, "tracks": 0, "elapsed": sp["elapsed"],
+                      "duration": sp["duration"], "random": False, "spotify": True,
+                      "cover_url": sp["cover"] or None})
+            if sp["volume"] is not None:
+                s["volume"] = sp["volume"]
         return s
 
     def emit(self, event, data):
@@ -127,11 +160,44 @@ class Box:
                 pass
 
     def _on_player(self, state):
-        if state.get("state") == "play":
-            self.spotify = False
         full = self.full_state()
         self.emit("state", full)
         self.mqtt.publish_state(full)
+
+    def _on_spotify(self, kind):
+        """Läuft im Ereignis-Thread. Spotify übernimmt beim Abspielen, die Karte
+        läuft nach dem Ende der Spotify-Sitzung weiter."""
+        if kind == "playing" and self.controller != "spotify":
+            self.controller = "spotify"
+            if self.player.state.get("state") == "play":
+                self.resume_after_spotify = True
+                self.loop.run_in_executor(None, self.player.pause)
+            log.info("Spotify übernimmt%s", " – Karte pausiert" if self.resume_after_spotify else "")
+        elif kind == "ended" and self.controller == "spotify":
+            self.controller = "box"
+            if self.resume_after_spotify:
+                self.resume_after_spotify = False
+                log.info("Spotify beendet – Karte läuft weiter")
+                self.loop.run_in_executor(None, self.player.play)
+            else:
+                log.info("Spotify beendet")
+        full = self.full_state()
+        self._emit("state", full)
+        self.mqtt.publish_state(full)
+
+    def _take_over_from_spotify(self):
+        """Karte oder Oberfläche startet etwas: Spotify pausieren, Box steuern."""
+        self.resume_after_spotify = False
+        if self.controller == "spotify":
+            self.controller = "box"
+            if self.loop:
+                asyncio.run_coroutine_threadsafe(self._spotify_quiet("pause"), self.loop)
+
+    async def _spotify_quiet(self, action):
+        try:
+            await self.spotify.command(action)
+        except Exception as e:
+            log.info("Spotify: %s", e)
 
     def toast(self, message, kind="error"):
         self.emit("toast", {"message": message, "kind": kind})
@@ -152,6 +218,11 @@ class Box:
 
     def _do(self, action, value=None):
         p = self.player
+        if self.controller == "spotify" and action in SPOTIFY_ACTIONS:
+            fut = asyncio.run_coroutine_threadsafe(
+                self.spotify.command(action, value, self.store.config["audio"]["volume_max"]), self.loop)
+            fut.result(timeout=8)
+            return
         if action == "play_pause":
             p.play_pause()
         elif action == "play":
@@ -179,10 +250,12 @@ class Box:
             p.set_stream(on)
         elif action == "play_folder":
             self.library.path(value)
+            self._take_over_from_spotify()
             self.active_card = None
             p.play_folder(str(value).strip("/"), restart=False)
         elif action == "play_url":
             self._check_url(value)
+            self._take_over_from_spotify()
             self.active_card = None
             p.play_url(value)
         elif action == "shutdown":
@@ -220,6 +293,8 @@ class Box:
             self.emit("card", {"id": main, "known": False})
             return
         card = cards[key]
+        if card.get("type") != "command":
+            self._take_over_from_spotify()
         self.emit("card", {"id": key, "known": True, **card})
         try:
             self._run_card(key, card)
@@ -249,7 +324,9 @@ class Box:
         log.info("Karte entfernt")
         self.emit("card_removed", {})
         if self.store.config["audio"]["pause_on_remove"] and self.active_card:
-            self.player.pause()
+            self.resume_after_spotify = False  # Figur ist weg: nach Spotify nicht weiterspielen
+            if self.controller == "box":
+                self.player.pause()
 
 
 # =====================================================================
@@ -706,6 +783,7 @@ async def api_system(request):
     b = box(request)
     info = await asyncio.to_thread(system.info, __version__)
     info.update({"disk": b.library.disk(), "mock": b.mock, "mpd": b.player.state.get("state") != "offline",
+                 "spotify": b.spotify.available, "update_info": b.update_info,
                  "stream_url": f"http://{info['ip'] or info['hostname']}:{b.store.config['audio']['stream_port']}/klangkiste.mp3"})
     return ok(info)
 
@@ -714,8 +792,13 @@ async def api_system(request):
 async def api_system_action(request):
     b = box(request)
     action = (await request.json())["action"]
+    if action == "check_update":
+        b.update_info = await system.check_updates()
+        b.emit("state", b.full_state())
+        return ok(b.update_info)
     if action == "update":
-        return ok(await system.update(b.mock))
+        await system.start_update(b.mock)
+        return ok({"started": True})
     if action not in ("reboot", "shutdown", "restart"):
         raise ValueError("Unbekannte Aktion")
     if action != "restart":
@@ -748,22 +831,6 @@ sequence:
       media_content_id: "http://{ip}:{port}/klangkiste.mp3"
 """
     return web.Response(text=text, content_type="text/plain", charset="utf-8")
-
-
-@routes.post("/api/hook/spotify")
-async def api_spotify(request):
-    if request.remote not in ("127.0.0.1", "::1"):
-        raise web.HTTPForbidden()
-    b = box(request)
-    event = (await request.post()).get("event", "")
-    if event in ("playing", "started", "session_connected", "track_changed"):
-        b.spotify = True
-        b.active_card = None
-        await asyncio.to_thread(b.player.pause)
-    elif event in ("paused", "stopped", "session_disconnected", "end_of_track"):
-        b.spotify = False
-    b.emit("state", b.full_state())
-    return ok()
 
 
 # ---------- nur im Simulationsmodus ----------
@@ -807,6 +874,7 @@ def main():
     ap.add_argument("--port", type=int, default=80)
     ap.add_argument("--mpd-host", default="127.0.0.1")
     ap.add_argument("--mpd-port", type=int, default=6600)
+    ap.add_argument("--spotify-url", default="http://127.0.0.1:3678")
     ap.add_argument("--mock", action="store_true", help="ohne Hardware laufen (Test)")
     args = ap.parse_args()
     if args.mock:
