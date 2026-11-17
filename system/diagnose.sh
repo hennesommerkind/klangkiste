@@ -27,3 +27,23 @@ command -v avahi-resolve >/dev/null && timeout 5 avahi-resolve -n "$(hostname).l
 h "Oberfläche"
 ss -ltnp 2>/dev/null | grep -E ":80 |:8000 " | awk '{print $4, $6}'
 curl -s -o /dev/null -w "Antwort %{http_code} in %{time_total}s\n" http://127.0.0.1/api/state
+h "Aussetzer laut Mitschrift (alle 15 s eine Messung)"
+M=/var/lib/klangkiste/monitor.log
+if [ -f "$M" ]; then
+    echo "Messungen: $(wc -l < "$M"), seit $(head -1 "$M" | cut -d' ' -f1,2)"
+    echo "Router nicht erreicht:      $(grep -c 'router=\(FEHLT\|KEIN-NETZ\)' "$M")"
+    echo "Router langsam (> 200 ms):  $(awk '{for(i=1;i<=NF;i++) if($i ~ /^router=[0-9.]+$/){split($i,a,"="); if(a[2]>200) c++}} END{print c+0}' "$M")"
+    echo "Oberfläche ohne Antwort:    $(grep -c 'seite=FEHLT' "$M")"
+    echo "Oberfläche langsam (> 1 s): $(awk '{for(i=1;i<=NF;i++) if($i ~ /^seite=[0-9.]+$/){split($i,a,"="); if(a[2]>1) c++}} END{print c+0}' "$M")"
+    echo "Unterspannung gerade:       $(grep -c 'strom=0x[0-9a-f]*[1357]$\|strom=0x[0-9a-f]*[1357] ' "$M")"
+    echo "Während Bluetooth-Suche:    $(grep -c 'bt-suche=[1-9]' "$M")"
+    echo "--- die letzten 25 auffälligen Messungen ---"
+    awk '{bad=0; for(i=1;i<=NF;i++){ if($i ~ /^router=(FEHLT|KEIN-NETZ)$/ || $i=="seite=FEHLT") bad=1;
+          if($i ~ /^router=[0-9.]+$/){split($i,a,"="); if(a[2]>200) bad=1}
+          if($i ~ /^seite=[0-9.]+$/){split($i,a,"="); if(a[2]>1) bad=1} } if(bad) print}' "$M" | tail -25
+else
+    echo "Noch keine Mitschrift – erst nach dem Update vorhanden."
+fi
+h "Bluetooth"
+grep -o '"device": *"[^"]*"\|"auto_connect": *[a-z]*' /var/lib/klangkiste/config.json 2>/dev/null | sed 's/"device": *"\(..\).*"/gemerkter Kopfhörer: ja (\1:…)/; s/"device": *""/gemerkter Kopfhörer: nein/'
+journalctl -b -u klangkiste --no-pager 2>/dev/null | grep -c "Kopfhörer" | sed 's/^/Kopfhörer-Meldungen: /'

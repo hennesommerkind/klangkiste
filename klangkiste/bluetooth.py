@@ -28,7 +28,10 @@ def _clean_mac(mac):
 
 class Bluetooth:
     POLL = 3          # Sekunden zwischen Verbindungsprüfungen
-    RECONNECT = 15    # Sekunden zwischen Verbindungsversuchen
+    # Jeder Verbindungsversuch belegt mehrere Sekunden lang die Antenne, die sich Bluetooth
+    # und WLAN beim Pi teilen – das WLAN hakt so lange. Deshalb nur selten selbst suchen;
+    # ein eingeschalteter, gekoppelter Kopfhörer meldet sich ohnehin von sich aus.
+    RECONNECT = 300   # Sekunden zwischen Verbindungsversuchen
 
     def __init__(self, store, on_change):
         self.store = store

@@ -215,8 +215,11 @@ EOF
 chmod 440 /etc/sudoers.d/klangkiste
 install -m 644 "$APP/system/klangkiste.service" /etc/systemd/system/klangkiste.service
 install -m 644 "$APP/system/klangkiste-update.service" /etc/systemd/system/klangkiste-update.service
+install -m 644 "$APP/system/klangkiste-monitor.service" /etc/systemd/system/klangkiste-monitor.service
 systemctl daemon-reload
 systemctl enable klangkiste.service
+systemctl enable klangkiste-monitor.service
+systemctl restart klangkiste-monitor.service || true
 if [ -f /etc/systemd/system/go-librespot.service ]; then
     systemctl enable go-librespot.service
     if [ "$GLR_CHANGED" = 1 ] || ! systemctl is-active -q go-librespot.service; then

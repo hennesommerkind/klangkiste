@@ -1,0 +1,11 @@
+[Unit]
+Description=Klangkiste – Erreichbarkeit mitschreiben
+
+[Service]
+ExecStart=/bin/bash /opt/klangkiste/system/monitor.sh
+Restart=always
+RestartSec=30
+Nice=10
+
+[Install]
+WantedBy=multi-user.target
