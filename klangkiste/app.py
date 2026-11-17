@@ -1,6 +1,7 @@
 """Klangkiste – Hauptprogramm: verbindet Player, Karten, Knöpfe, MQTT, Web."""
 import argparse
 import asyncio
+import contextlib
 import json
 import logging
 import mimetypes
@@ -611,8 +612,9 @@ async def api_delete(request):
 async def api_upload(request):
     b = box(request)
     folder = request.query["folder"]
+    episode = request.query.get("episodes") == "1"
     reader = await request.multipart()
-    saved, errors = [], []
+    saved, errors, episodes = [], [], []
     while True:
         part = await reader.next()
         if part is None:
@@ -620,7 +622,7 @@ async def api_upload(request):
         if not part.filename:
             continue
         try:
-            target = b.library.upload_target(folder, part.filename)
+            target, created = b.library.upload_target(folder, part.filename, episode)
         except LibraryError as e:
             errors.append(str(e))
             await part.release()
@@ -635,11 +637,16 @@ async def api_upload(request):
                     f.write(chunk)
             os.replace(tmp, target)
             saved.append(target.name)
+            if created:
+                episodes.append(b.library.rel(target.parent))
         except OSError as e:
             tmp.unlink(missing_ok=True)
+            if created:
+                with contextlib.suppress(OSError):
+                    target.parent.rmdir()
             errors.append(f"{part.filename}: {e.strerror or e}")
     await asyncio.to_thread(b.player.update_db)
-    return ok({"saved": saved, "errors": errors})
+    return ok({"saved": saved, "errors": errors, "episodes": episodes})
 
 
 @routes.get("/api/cover")

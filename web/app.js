@@ -306,9 +306,11 @@ const viewFolder = run(async () => {
       <button class="iconbtn" id="mv" aria-label="Verschieben" title="Verschieben">${ICON.move}</button>
       <button class="iconbtn" id="del" aria-label="Ordner löschen" title="Ordner löschen">${ICON.trash}</button></div></div></div>
     ${subs.length ? `<div class="row" style="justify-content:space-between;margin-bottom:10px"><h2 style="margin:0">${subWord}</h2>${subs.length > 1 ? `<button class="btn small" id="sortf">${ICON.sort} Reihenfolge</button>` : ""}</div><div id="subarea">${tiles(subs)}</div><div style="height:26px"></div>` : ""}
-    ${subs.length && !tracks.length ? `<p class="muted small">Titel lädst du in die einzelnen ${subWord} hoch. Eine Karte für „${esc(leaf(name))}“ spielt alle ${subWord} nacheinander, in der Reihenfolge oben.</p>` : `
+    ${subs.length && !tracks.length ? `${music ? "" : `<div class="drop" id="drop" data-ep="1" tabindex="0" role="button"><b>Folgen hinzufügen</b><br><span class="small">Mehrere Dateien hierher ziehen oder tippen – jede Datei wird eine eigene Folge</span><div id="up"></div></div>`}
+    <p class="muted small">${music ? `Titel lädst du in die einzelnen ${subWord} hoch.` : `Besteht eine Folge aus mehreren Dateien, lege sie mit + an und lade die Dateien dort hoch.`} Eine Karte für „${esc(leaf(name))}“ spielt alle ${subWord} nacheinander, in der Reihenfolge oben.</p>` : `
     <div class="drop" id="drop" tabindex="0" role="button"><b>Titel hinzufügen</b><br><span class="small">Dateien hierher ziehen oder tippen (MP3, M4A, OGG, FLAC, WAV)</span><div id="up"></div></div>
-    <div id="trackarea"><div class="card">${tracks.length ? `${tracks.length > 1 ? `<div class="row" style="justify-content:flex-end;margin:-6px 0 4px"><button class="btn small" id="sortt">${ICON.sort} Reihenfolge</button></div>` : ""}<ul class="list">${tracks.map((t, i) => `<li><span class="muted small" style="min-width:1.8em;text-align:right">${i + 1}</span><div class="grow"><b style="font-weight:600">${esc(t.file)}</b></div><span class="muted small">${size(t.size)}</span><button class="iconbtn" data-del="${i}" aria-label="Titel löschen">${ICON.trash}</button></li>`).join("")}</ul>` : `<p class="muted" style="margin:0">Dieser Ordner ist noch leer.${music ? "" : " Für eine Serie lege mit + Folgen an; für ein einzelnes Hörspiel lade die Titel direkt hier hoch."}</p>`}</div></div>`}
+    ${!music && !tracks.length ? `<label class="switch"><span>Jede Datei als eigene Folge<br><span class="muted small">Für Serien: aus jeder Datei wird ein eigener Unterordner, dem du eine Karte geben kannst</span></span><input type="checkbox" id="epmode"></label>` : ""}
+    <div id="trackarea"><div class="card">${tracks.length ? `${tracks.length > 1 ? `<div class="row" style="justify-content:flex-end;margin:-6px 0 4px"><button class="btn small" id="sortt">${ICON.sort} Reihenfolge</button></div>` : ""}<ul class="list">${tracks.map((t, i) => `<li><span class="muted small" style="min-width:1.8em;text-align:right">${i + 1}</span><div class="grow"><b style="font-weight:600">${esc(t.file)}</b></div><span class="muted small">${size(t.size)}</span><button class="iconbtn" data-del="${i}" aria-label="Titel löschen">${ICON.trash}</button></li>`).join("")}</ul>` : `<p class="muted" style="margin:0">Dieser Ordner ist noch leer.${music ? "" : " Für eine Serie schalte „Jede Datei als eigene Folge“ ein oder lege mit + Folgen an; für ein einzelnes Hörspiel lade die Titel direkt hier hoch."}</p>`}</div></div>`}
     <input type="file" id="files" multiple accept="audio/*,.mp3,.m4a,.m4b,.ogg,.opus,.flac,.wav,.aac,image/*" hidden>
     <input type="file" id="cvfile" accept="image/*" hidden>`;
   $$(".crumbs .crumb").forEach((b) => b.onclick = () => { const p = b.dataset.p; CATS.includes(p) ? goCat(p) : goFolder(p); });
@@ -336,9 +338,11 @@ const viewFolder = run(async () => {
     drop.onclick = () => files.click(); drop.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") files.click(); };
     drop.ondragover = (e) => { e.preventDefault(); drop.classList.add("over"); };
     drop.ondragleave = () => drop.classList.remove("over");
-    drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove("over"); upload(name, [...e.dataTransfer.files]); };
+    drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove("over"); upload(name, [...e.dataTransfer.files], epMode()); };
   }
-  files.onchange = () => upload(name, [...files.files]);
+  if ($("#epmode")) $("#epmode").onchange = (e) => { $("#drop b").textContent = e.target.checked ? "Folgen hinzufügen" : "Titel hinzufügen"; };
+  const epMode = () => !!(drop && drop.dataset.ep) || !!($("#epmode") && $("#epmode").checked);
+  files.onchange = () => { upload(name, [...files.files], epMode()); files.value = ""; };
   $("#cv").onclick = () => $("#cvfile").click();
   $("#cvfile").onchange = run(async (e) => {
     const file = e.target.files[0]; if (!file) return;
@@ -359,18 +363,19 @@ function xhrUpload(url, file, onProgress) {
     x.onerror = () => rej(new Error("Verbindung beim Hochladen abgebrochen")); x.send(fd);
   });
 }
-async function upload(folder, list) {
+async function upload(folder, list, episodes = false) {
   if (!list.length || S.uploading) return; S.uploading = true;
-  const up = $("#up"), all = list.reduce((a, f) => a + f.size, 0); let done = 0; const errors = [];
+  const up = $("#up"), all = list.reduce((a, f) => a + f.size, 0); let done = 0, made = 0; const errors = [];
   for (const [i, f] of list.entries()) {
     try {
-      const r = await xhrUpload("/api/library/upload?folder=" + encodeURIComponent(folder), f, (l) => { if (up.isConnected) up.innerHTML = `<progress max="${all}" value="${done + l}"></progress><div class="small">${i + 1} von ${list.length}: ${esc(f.name)}</div>`; });
-      errors.push(...(r.errors || []));
+      const r = await xhrUpload("/api/library/upload?folder=" + encodeURIComponent(folder) + (episodes ? "&episodes=1" : ""), f, (l) => { if (up.isConnected) up.innerHTML = `<progress max="${all}" value="${done + l}"></progress><div class="small">${i + 1} von ${list.length}: ${esc(f.name)}</div>`; });
+      errors.push(...(r.errors || [])); made += (r.episodes || []).length;
     } catch (e) { errors.push(f.name + ": " + e.message); }
     done += f.size;
   }
   S.uploading = false;
-  errors.length ? toast(errors[0] + (errors.length > 1 ? ` (+${errors.length - 1} weitere)` : ""), "error") : toast(list.length === 1 ? "Datei hochgeladen" : list.length + " Dateien hochgeladen");
+  errors.length ? toast(errors[0] + (errors.length > 1 ? ` (+${errors.length - 1} weitere)` : ""), "error")
+    : toast(made ? (made === 1 ? "1 Folge angelegt" : made + " Folgen angelegt") : list.length === 1 ? "Datei hochgeladen" : list.length + " Dateien hochgeladen");
   if (S.folder === folder) viewFolder();
 }
 

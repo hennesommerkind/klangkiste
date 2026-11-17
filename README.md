@@ -63,6 +63,10 @@ Musik/
 Eine Karte kann auf eine einzelne Folge oder auf die ganze Serie zeigen (dann laufen alle
 Folgen nacheinander, in natürlicher Reihenfolge: Folge 2 vor Folge 10).
 
+Viele Folgen auf einmal: Ist jede Folge eine einzige Datei, in der Serie mehrere Dateien
+hochladen – „Jede Datei als eigene Folge“ (in einer leeren Serie als Schalter, in einer Serie
+mit Folgen automatisch) legt pro Datei einen Unterordner mit ihrem Namen an.
+
 ## MQTT
 
 Status (JSON, retained): `klangkiste/state` · Erreichbarkeit: `klangkiste/status` ·

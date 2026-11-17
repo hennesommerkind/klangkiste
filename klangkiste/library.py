@@ -229,15 +229,25 @@ class Library:
         src.rename(dst)
         self._rename_in_order(src.parent, "tracks", src.name, dst.name)
 
-    def upload_target(self, folder, filename):
-        """Zielpfad für einen Upload; erlaubt Audio- und Bilddateien."""
+    def upload_target(self, folder, filename, episode=False):
+        """Zielpfad für einen Upload; erlaubt Audio- und Bilddateien.
+        episode=True: jede Audiodatei bekommt einen eigenen Unterordner (eine Folge),
+        benannt nach dem Dateinamen ohne Endung. Liefert (Pfad, neu_angelegter_Ordner)."""
         d = self.path(folder)
         if not d.is_dir() or d == self.root:
             raise LibraryError("Ordner nicht gefunden")
         name = clean_name(Path(str(filename).replace("\\", "/")).name)
-        if Path(name).suffix.lower() not in AUDIO | IMAGES:
+        suffix = Path(name).suffix.lower()
+        if suffix not in AUDIO | IMAGES:
             raise LibraryError(f"Dateityp nicht unterstützt: {name}")
-        return d / name
+        if episode and suffix in AUDIO:
+            sub = d / clean_name(Path(name).stem)
+            if sub.exists() and not sub.is_dir():
+                raise LibraryError(f"„{sub.name}“ gibt es schon als Datei")
+            created = not sub.exists()
+            sub.mkdir(exist_ok=True)
+            return sub / name, created
+        return d / name, False
 
     def cover_bytes(self, folder, _depth=0):
         """Cover als (bytes|Path, mime). Erst Bilddatei, dann eingebettetes Bild,
