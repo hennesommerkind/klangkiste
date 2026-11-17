@@ -103,6 +103,27 @@ systemctl enable mpd.service
 systemctl mask --now mpd.socket 2>/dev/null || true
 if [ "$MPD_CHANGED" = 1 ] || ! systemctl is-active -q mpd.service; then systemctl restart mpd.service || true; fi
 
+say "Schneller starten"
+# cloud-init richtet beim allerersten Start die Imager-Einstellungen ein und kostet
+# danach bei jedem Start mehrere Sekunden. Abschalten, sobald es einmal fertig ist.
+if [ -d /etc/cloud ] && [ -f /var/lib/cloud/instance/boot-finished ] && [ ! -f /etc/cloud/cloud-init.disabled ]; then
+    touch /etc/cloud/cloud-init.disabled
+    echo "cloud-init abgeschaltet"
+fi
+# MPD wartet laut Paket auf das Netzwerk, obwohl er nur auf der Box lauscht.
+# Eigene Kopie der Dienstdatei ohne diese Abhängigkeit (und ohne den Netz-Socket).
+if [ -f /usr/lib/systemd/system/mpd.service ]; then
+    sed -e 's/^After=.*/After=sound.target/' -e '/^Also=/d' /usr/lib/systemd/system/mpd.service > /etc/systemd/system/mpd.service.new
+    if ! cmp -s /etc/systemd/system/mpd.service.new /etc/systemd/system/mpd.service; then
+        mv /etc/systemd/system/mpd.service.new /etc/systemd/system/mpd.service
+        systemctl daemon-reload
+    else
+        rm -f /etc/systemd/system/mpd.service.new
+    fi
+fi
+# Auf „online“ wartet nichts, was die Box braucht
+systemctl disable NetworkManager-wait-online.service 2>/dev/null || true
+
 say "Protokolle begrenzen"
 install -d /etc/systemd/journald.conf.d
 JCONF=$(printf '[Journal]\nSystemMaxUse=50M\nRuntimeMaxUse=20M\n')

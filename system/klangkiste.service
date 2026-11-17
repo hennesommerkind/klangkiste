@@ -1,6 +1,8 @@
 [Unit]
 Description=Klangkiste – RFID-Musikbox
-After=network.target sound.target mpd.service
+# Nicht auf das Netzwerk warten: Figuren und Knöpfe brauchen kein WLAN, und
+# die Verbindung zum Abspieler (MPD) baut die Klangkiste selbst auf, sobald er bereit ist.
+After=sound.target
 Wants=mpd.service
 
 [Service]

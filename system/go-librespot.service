@@ -1,7 +1,6 @@
 [Unit]
 Description=Spotify Connect (go-librespot) für die Klangkiste
-After=network-online.target sound.target avahi-daemon.service
-Wants=network-online.target
+After=network.target sound.target avahi-daemon.service
 
 [Service]
 User=klangkiste

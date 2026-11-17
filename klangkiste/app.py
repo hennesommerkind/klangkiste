@@ -108,7 +108,7 @@ class Box:
             self.watcher.start()
 
     async def _startup_volume(self):
-        for _ in range(60):
+        for _ in range(180):  # MPD startet parallel und kann etwas brauchen
             if self.player.state.get("state") != "offline":
                 await asyncio.to_thread(self.player.set_headphones, self.bluetooth.connected)
                 await asyncio.to_thread(self.player.set_volume, self.store.config["audio"]["volume_start"])
