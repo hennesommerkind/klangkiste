@@ -6,9 +6,14 @@ Wants=mpd.service
 [Service]
 User=klangkiste
 Group=klangkiste
-WorkingDirectory=/opt/klangkiste
-ExecStart=/usr/bin/python3 -m klangkiste --data /var/lib/klangkiste --port 80
+# Arbeitsordner muss beschreibbar sein: lgpio legt dort Hilfsdateien an.
+# Das Programm selbst liegt in /opt/klangkiste und gehört root.
+WorkingDirectory=/var/lib/klangkiste
+Environment=PYTHONPATH=/opt/klangkiste
+Environment=LG_WD=/var/lib/klangkiste
 Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 -m klangkiste --data /var/lib/klangkiste --port 80
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 Restart=always
 RestartSec=3

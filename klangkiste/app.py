@@ -880,4 +880,5 @@ def main():
     if args.mock:
         os.environ.setdefault("GPIOZERO_PIN_FACTORY", "mock")
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    logging.captureWarnings(True)
     web.run_app(make_app(args), host=args.host, port=args.port, access_log=None)
