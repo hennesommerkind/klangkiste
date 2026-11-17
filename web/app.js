@@ -110,7 +110,11 @@ function connect() {
   es.addEventListener("learned", (e) => { const d = JSON.parse(e.data); closeDialog(); toast("Karte gespeichert: " + leaf(d.target)); if (S.view !== "now") render(); });
   es.addEventListener("backup", (e) => { S.backup = JSON.parse(e.data); if (S.view === "settings") paintBackup(); });
   es.addEventListener("update", () => { S.state.update = true; updateDot(); });
-  es.onerror = () => { if (S.state.state !== "offline") onState({ ...S.state, state: "offline", lost: true }); };
+  es.onerror = () => {
+    if (S.state.state !== "offline") onState({ ...S.state, state: "offline", lost: true });
+    // Manche Browser geben nach einem Fehler auf – dann selbst neu verbinden
+    if (es.readyState === 2) setTimeout(connect, 3000);
+  };
 }
 setInterval(() => { if (S.view === "now" && S.state.state === "play") tick(); }, 500);
 setInterval(run(async () => { if (!document.hidden && S.state.state === "play") { S.state = await api("/api/state"); S.synced = performance.now(); } }), 15000);

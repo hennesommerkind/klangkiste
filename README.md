@@ -76,6 +76,11 @@ Befehle an `klangkiste/cmd/…`: `play_pause`, `play`, `pause`, `next`, `prev`, 
 `vol_up`, `vol_down`, `volume` (0–100), `stream` (ON/OFF), `play_folder` (Ordnername),
 `play_url` (Adresse), `shutdown`.
 
+## Wenn die Box schlecht erreichbar ist
+
+`sudo bash /opt/klangkiste/system/diagnose.sh` sammelt Dienste, WLAN-Signal, Stromsparmodus,
+Unterspannung, Abbrüche und die Namensauflösung in einer Ausgabe (ohne Kennwörter).
+
 ## Technik
 
 - `klangkiste/` – Python-Dienst (aiohttp), steuert MPD, Leser, Knöpfe, MQTT, Sicherung

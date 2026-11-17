@@ -42,6 +42,19 @@ def ip_address():
         return ""
 
 
+_running = None
+
+
+def running_revision():
+    """Stand des laufenden Programms – einmal beim ersten Aufruf gelesen. Während eines
+    Updates liegt auf der Karte schon der neue Stand, es läuft aber noch der alte."""
+    global _running
+    if _running is None:
+        _running = (_git("rev-parse", "--short", "HEAD"),
+                    _git("log", "-1", "--format=%cd", "--date=format:%d.%m.%Y"))
+    return _running
+
+
 def info(version):
     temp = ""
     try:
@@ -55,8 +68,8 @@ def info(version):
         pass
     return {
         "version": version,
-        "revision": _git("rev-parse", "--short", "HEAD"),
-        "revision_date": _git("log", "-1", "--format=%cd", "--date=format:%d.%m.%Y"),
+        "revision": running_revision()[0],
+        "revision_date": running_revision()[1],
         "hostname": socket.gethostname(),
         "ip": ip_address(),
         "temperature": temp,

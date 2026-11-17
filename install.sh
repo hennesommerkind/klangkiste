@@ -92,7 +92,7 @@ grep -q "^dtoverlay=$SOUND_OVERLAY" "$CFG" || echo "dtoverlay=$SOUND_OVERLAY" >>
 sed "s/CARDNAME/$SOUND_CARD/g" "$APP/system/asound.conf" > /etc/asound.conf
 
 say "Abspieler (MPD) einrichten"
-MPD_CHANGED=0
+MPD_CHANGED=0; GLR_CHANGED=0
 if ! cmp -s "$APP/system/mpd.conf" /etc/mpd.conf; then
     install -m 644 "$APP/system/mpd.conf" /etc/mpd.conf
     MPD_CHANGED=1
@@ -157,8 +157,12 @@ if [ "$SPOTIFY" = 1 ]; then
         fi
     fi
     if [ -x /usr/local/bin/go-librespot ]; then
-        install -m 644 -o klangkiste -g klangkiste "$APP/system/go-librespot.yml" "$DATA/spotify/config.yml"
-        install -m 644 "$APP/system/go-librespot.service" /etc/systemd/system/go-librespot.service
+        # Nur anfassen, was sich geändert hat – sonst reißt jedes Update Spotify ab.
+        # Die Einstellungsdatei passt die Klangkiste selbst an (Lautsprecher/Kopfhörer).
+        [ -f "$DATA/spotify/config.yml" ] \
+            || { install -m 644 -o klangkiste -g klangkiste "$APP/system/go-librespot.yml" "$DATA/spotify/config.yml"; GLR_CHANGED=1; }
+        cmp -s "$APP/system/go-librespot.service" /etc/systemd/system/go-librespot.service \
+            || { install -m 644 "$APP/system/go-librespot.service" /etc/systemd/system/go-librespot.service; GLR_CHANGED=1; }
     fi
 fi
 
@@ -169,10 +173,14 @@ if command -v bluetoothctl >/dev/null; then
     BA=$(command -v bluealsad || command -v bluealsa || true)   # ab bluez-alsa 5.0 heißt das Programm bluealsad
     if [ -n "$BA" ] && systemctl cat bluealsa.service >/dev/null 2>&1; then
         install -d /etc/systemd/system/bluealsa.service.d
-        printf '[Service]\nExecStart=\nExecStart=%s -S -p a2dp-source\n' "$BA" > /etc/systemd/system/bluealsa.service.d/klangkiste.conf
-        systemctl daemon-reload
+        BACONF=$(printf '[Service]\nExecStart=\nExecStart=%s -S -p a2dp-source\n' "$BA")
+        if [ "$(cat /etc/systemd/system/bluealsa.service.d/klangkiste.conf 2>/dev/null)" != "$BACONF" ]; then
+            echo "$BACONF" > /etc/systemd/system/bluealsa.service.d/klangkiste.conf
+            systemctl daemon-reload
+            systemctl restart bluealsa.service || true
+        fi
         systemctl enable bluealsa.service 2>/dev/null || true
-        systemctl restart bluealsa.service || true
+        systemctl is-active -q bluealsa.service || systemctl start bluealsa.service || true
     else
         echo "bluez-alsa nicht gefunden – Kopfhörer werden nicht unterstützt."
     fi
@@ -180,6 +188,13 @@ fi
 
 say "WLAN-Verwaltung freigeben"
 if command -v nmcli >/dev/null; then
+    # Stromsparen des WLAN-Chips aus: Im Schlaf verpasst er Anfragen (vor allem die
+    # Namenssuche „klangkiste.local“), die Box wirkt dann zeitweise unerreichbar.
+    PSCONF=$(printf '[connection]\nwifi.powersave = 2\n')
+    if [ "$(cat /etc/NetworkManager/conf.d/klangkiste-wlan.conf 2>/dev/null)" != "$PSCONF" ]; then
+        echo "$PSCONF" > /etc/NetworkManager/conf.d/klangkiste-wlan.conf   # gilt ab dem nächsten Verbinden
+    fi
+    command -v iw >/dev/null && iw dev wlan0 set power_save off 2>/dev/null || true   # sofort
     install -d /etc/polkit-1/rules.d
     cat > /etc/polkit-1/rules.d/50-klangkiste.rules <<'EOF'
 // Die Klangkiste darf WLANs verwalten (Netz wechseln, eigenes Not-WLAN öffnen).
@@ -204,7 +219,9 @@ systemctl daemon-reload
 systemctl enable klangkiste.service
 if [ -f /etc/systemd/system/go-librespot.service ]; then
     systemctl enable go-librespot.service
-    systemctl restart go-librespot.service || true
+    if [ "$GLR_CHANGED" = 1 ] || ! systemctl is-active -q go-librespot.service; then
+        systemctl restart go-librespot.service || true
+    fi
 fi
 systemctl restart klangkiste.service
 

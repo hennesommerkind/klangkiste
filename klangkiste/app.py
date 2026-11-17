@@ -53,6 +53,7 @@ class Box:
         self.backup = None
         self.loop = None
         self.clients = set()
+        self.closing = False
         self.learn = None
         self.active_card = None
         self.last_unknown = None
@@ -73,6 +74,7 @@ class Box:
         self.backup = Backup(self.store, on_restored=self._after_restore,
                              on_status=lambda s: self.emit("backup", s))
         self.player.start()
+        await asyncio.to_thread(system.running_revision)   # jetzt merken, nicht erst während eines Updates
         await asyncio.to_thread(self._init_hardware)
         self.mqtt.start()
         app["scheduler"] = asyncio.create_task(self.backup.scheduler())
@@ -167,6 +169,14 @@ class Box:
             if sp["volume"] is not None:
                 s["volume"] = sp["volume"]
         return s
+
+    async def close_clients(self, app=None):
+        """Offene Ereignis-Verbindungen der Browser beenden. Ohne das wartet der Dienst
+        beim Beenden auf jede offene Seite – ein Neustart dauerte dann über eine Minute."""
+        self.closing = True
+        for q in list(self.clients):
+            with contextlib.suppress(asyncio.QueueFull):
+                q.put_nowait(None)
 
     def emit(self, event, data):
         if self.loop:
@@ -478,9 +488,12 @@ async def api_events(request):
     b.clients.add(q)
     try:
         await resp.write(f"event: state\ndata: {json.dumps(b.full_state())}\n\n".encode())
-        while True:
+        while not b.closing:
             try:
-                event, data = await asyncio.wait_for(q.get(), 20)
+                item = await asyncio.wait_for(q.get(), 20)
+                if item is None:      # Dienst wird beendet
+                    break
+                event, data = item
                 await resp.write(f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n".encode())
             except asyncio.TimeoutError:
                 await resp.write(b": ping\n\n")
@@ -1093,6 +1106,7 @@ def make_app(args):
     app.router.add_get("/sw.js", service_worker)
     app.router.add_static("/static/", WEB)
     app.on_startup.append(b.start)
+    app.on_shutdown.append(b.close_clients)
     app.on_cleanup.append(b.stop)
     return app
 
@@ -1100,7 +1114,9 @@ def make_app(args):
 def main():
     ap = argparse.ArgumentParser(description="Klangkiste")
     ap.add_argument("--data", default="/var/lib/klangkiste")
-    ap.add_argument("--host", default=None, help="Standard: alle Adressen, IPv4 und IPv6")
+    # Nur IPv4: Über eine öffentliche IPv6-Adresse geladen, stufen Browser die Seite als
+    # „Internetseite“ ein und fragen bei jedem Zugriff auf die Box um Erlaubnis.
+    ap.add_argument("--host", default="0.0.0.0", help="Standard: alle IPv4-Adressen")
     ap.add_argument("--port", type=int, default=80)
     ap.add_argument("--mpd-host", default="127.0.0.1")
     ap.add_argument("--mpd-port", type=int, default=6600)
@@ -1111,4 +1127,4 @@ def main():
         os.environ.setdefault("GPIOZERO_PIN_FACTORY", "mock")
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     logging.captureWarnings(True)
-    web.run_app(make_app(args), host=args.host, port=args.port, access_log=None)
+    web.run_app(make_app(args), host=args.host, port=args.port, access_log=None, shutdown_timeout=3)
