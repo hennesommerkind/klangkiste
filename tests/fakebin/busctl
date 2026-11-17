@@ -1,0 +1,16 @@
+#!/usr/bin/env python3
+"""Attrappe von busctl: liefert BlueZ-Geräte aus $FAKE_BT im busctl-JSON-Format."""
+import json, os, sys
+path = os.environ.get("FAKE_BT", "/tmp/fake_bt.json")
+try: st = json.load(open(path))
+except Exception: st = {"devices": {}}
+objs = {"/org/bluez/hci0": {"org.bluez.Adapter1": {"Powered": {"type": "b", "data": True}}}}
+for mac, d in st["devices"].items():
+    if not (d.get("found") or d.get("paired")): continue
+    p = {"Address": {"type": "s", "data": mac}, "Name": {"type": "s", "data": d["name"]}, "Alias": {"type": "s", "data": d["name"]},
+         "Icon": {"type": "s", "data": d["icon"]}, "Paired": {"type": "b", "data": d.get("paired", False)},
+         "Trusted": {"type": "b", "data": d.get("trusted", False)}, "Connected": {"type": "b", "data": d.get("connected", False)},
+         "Class": {"type": "u", "data": 0x240404 if d["icon"].startswith("audio") else 0x5a020c}}
+    if d.get("found") and d.get("on"): p["RSSI"] = {"type": "n", "data": -60}
+    objs["/org/bluez/hci0/dev_" + mac.replace(":", "_")] = {"org.bluez.Device1": p}
+print(json.dumps({"type": "a{oa{sa{sv}}}", "data": [objs]}))

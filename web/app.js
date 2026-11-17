@@ -555,9 +555,13 @@ function paintBT(b) {
   $("#bt-scan").onclick = run(async () => {
     openDialog(`<h2>Kopfhörer suchen</h2><div class="pulse">${ICON.headphones.replace('class="icon"', 'width="50" height="50" fill="none" stroke="currentColor" stroke-width="1.8"')}</div><p style="text-align:center">Suche etwa 12 Sekunden …<br><span class="muted small">Der Kopfhörer muss im Kopplungsmodus sein.</span></p>`);
     let list; try { list = await api("/api/bluetooth/scan", {}); } catch (err) { closeDialog(); throw err; }
-    openDialog(`<h2>Gefundene Geräte</h2>${list.length ? `<ul class="list">${list.map((x, i) => `<li><div style="flex:none;color:var(--muted)">${x.audio ? ICON.headphones : ICON.bt}</div><div class="grow"><b>${esc(x.name)}</b><span>${x.audio ? "Kopfhörer / Lautsprecher" : "anderes Gerät"}${x.paired ? " · bereits gekoppelt" : ""}</span></div><button class="btn small ${x.audio ? "primary" : ""}" data-pair="${i}">Koppeln</button></li>`).join("")}</ul>` : `<p class="muted">Nichts gefunden. Ist der Kopfhörer im Kopplungsmodus und in der Nähe der Box?</p>`}
+    const audioCount = list.filter((x) => x.audio).length;
+    openDialog(`<h2>Gefundene Geräte</h2>${list.length ? `<ul class="list">${list.map((x, i) => `<li ${!x.audio && audioCount ? 'class="other" hidden' : ""}><div style="flex:none;color:var(--muted)">${x.audio ? ICON.headphones : ICON.bt}</div><div class="grow"><b>${esc(x.name)}</b><span>${x.audio ? "Kopfhörer / Lautsprecher" : "anderes Gerät"}${x.paired ? " · bereits gekoppelt" : ""}</span></div><button class="btn small ${x.audio ? "primary" : ""}" data-pair="${i}">Koppeln</button></li>`).join("")}</ul>` : `<p class="muted">Nichts gefunden. Ist der Kopfhörer im Kopplungsmodus und in der Nähe der Box?</p>`}
+      ${audioCount && audioCount < list.length ? `<button class="btn small" id="bt-more" style="margin-top:8px">Andere Geräte anzeigen (${list.length - audioCount})</button>` : ""}
+      ${list.length && !audioCount ? `<p class="muted small">Kein Kopfhörer erkannt. Steht deiner unter einem anderen Namen in der Liste, kannst du ihn trotzdem koppeln.</p>` : ""}
       <div class="actions"><button class="btn" id="bt-x">Schließen</button><button class="btn" id="bt-again">Noch einmal suchen</button></div>`);
     $("#bt-x", dialog).onclick = closeDialog;
+    if ($("#bt-more", dialog)) $("#bt-more", dialog).onclick = (e) => { $$("li.other", dialog).forEach((li) => li.hidden = false); e.currentTarget.remove(); };
     $("#bt-again", dialog).onclick = () => { closeDialog(); setTimeout(() => $("#bt-scan")?.click(), 50); };
     $$("[data-pair]", dialog).forEach((btn) => btn.onclick = run(async () => {
       const x = list[btn.dataset.pair];
