@@ -12,8 +12,13 @@ cmd, args = (a[0], a[1:]) if a else ("", [])
 D = st["devices"]
 def save(): json.dump(st, open(path, "w"))
 if cmd == "scan":
-    for d in D.values(): d["found"] = d["found"] or d["on"]
     print("Discovery started")
+    print("[CHG] Controller B8:27:EB:00:00:01 Discovering: yes")
+    for m, d in D.items():
+        if d["on"]:
+            print(f"\x1b[0;92m[NEW]\x1b[0m Device {m} {d['name']}" if not d["found"] else f"[CHG] Device {m} RSSI: -60")
+            d["found"] = True
+    print(f"[NEW] Device 66:77:88:99:AA:BB 66-77-88-99-AA-BB")
 elif cmd == "devices":
     for m, d in D.items():
         if d["found"] or d["paired"]:

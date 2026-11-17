@@ -82,7 +82,10 @@ class Bluetooth:
         except asyncio.TimeoutError:
             proc.kill()
             raise BluetoothError("Bluetooth antwortet nicht")
-        if proc.returncode != 0 and not (only and "UnknownObject" in err.decode("utf-8", "replace")):
+        if proc.returncode != 0 and only and ("UnknownObject" in err.decode("utf-8", "replace")
+                                                or "json" in err.decode("utf-8", "replace")):
+            return {}  # Gerät nicht bekannt oder Eigenschaften nicht lesbar
+        if proc.returncode != 0:
             msg = err.decode("utf-8", "replace").strip()
             if "Access denied" in msg or "not allowed" in msg:
                 msg = "keine Berechtigung (Box einmal neu starten)"
@@ -149,47 +152,87 @@ class Bluetooth:
         return {"available": self.available, "device": dev, "connected": self.connected,
                 "volume_max": self.cfg["volume_max"]}
 
+    async def _watch_scan(self, seconds, until_mac=None):
+        """Sucht und liest dabei mit, welche Geräte auftauchen.
+        Liefert {MAC: Name}; mit until_mac endet die Suche, sobald dieses Gerät gesehen wurde."""
+        seen = {}
+        for mode in (self._scan_mode, "on"):
+            proc = await self._scan_proc(seconds + 2)
+            invalid = False
+
+            async def reader():
+                nonlocal invalid
+                async for raw in proc.stdout:
+                    line = re.sub(r"\x1b\[[0-9;]*[A-Za-z]|\x01|\x02", "", raw.decode("utf-8", "replace"))
+                    if "nvalid" in line and "scan" in line.lower():
+                        invalid = True
+                    m = re.search(r"\[(NEW|CHG)\] Device ([0-9A-F:]{17})\s*(.*)", line)
+                    if m:
+                        mac, rest = m.group(2), m.group(3).strip()
+                        if m.group(1) == "NEW" and rest and not rest.replace("-", ":") == mac:
+                            seen[mac] = rest
+                        else:
+                            seen.setdefault(mac, "")
+                        if until_mac and mac == until_mac:
+                            return
+
+            task = asyncio.create_task(reader())
+            try:
+                await asyncio.wait_for(asyncio.shield(task), seconds)
+            except asyncio.TimeoutError:
+                pass
+            await self._stop(proc)
+            task.cancel()
+            if invalid and mode != "on":
+                self._scan_mode = "on"  # ältere BlueZ kennen „scan bredr“ nicht
+                continue
+            break
+        return seen
+
+    async def _names(self):
+        """Namen aller bekannten Geräte (ein schneller Aufruf)."""
+        try:
+            _, out = await self._ctl("devices", timeout=5)
+        except BluetoothError:
+            return {}
+        return {m.group(1): m.group(2).strip()
+                for m in re.finditer(r"Device ([0-9A-F:]{17}) (.+)", out)}
+
     async def scan(self, seconds=12):
         self.busy = True
-        proc = None
         try:
             await self.power_on()
-            proc = await self._scan_proc(seconds + 3)
-            await asyncio.sleep(1)
-            if proc.returncode is not None:  # „scan bredr“ unbekannt -> normale Suche
-                out = (await proc.stdout.read()).decode("utf-8", "replace")
-                if "Invalid" in out or "invalid" in out:
-                    self._scan_mode = "on"
-                    proc = await self._scan_proc(seconds + 3)
-            await asyncio.sleep(seconds)
-            devs = await self._objects()   # Abfrage während die Suche noch läuft (RSSI ist nur dann gesetzt)
-            found = [d for d in devs.values() if d["has_name"] and (d["seen"] or d["paired"])]
+            seen = await self._watch_scan(seconds)
+            names = await self._names()
+            found = []
+            for mac, name in list(seen.items())[:30]:
+                name = name or names.get(mac, "")
+                if not name or name.replace("-", ":") == mac:
+                    continue  # namenlose Geräte (meist Telefone, Fernseher im Hintergrund) ausblenden
+                try:
+                    d = await self.info(mac)
+                    d["name"] = d["name"] if d["name"] != mac else name
+                except BluetoothError:
+                    d = {"mac": mac, "name": name, "paired": False, "connected": False, "audio": False}
+                found.append(d)
             found.sort(key=lambda d: (not d["audio"], not d["paired"], d["name"].lower()))
             return found
         finally:
-            if proc:
-                await self._stop(proc)
             self.busy = False
 
     async def pair(self, mac):
         mac = _clean_mac(mac)
         self.busy = True
         try:
-            devs = await self._objects()
-            if mac not in devs:
+            try:
+                dev = await self.info(mac)
+            except BluetoothError:
                 # BlueZ vergisst gefundene Geräte nach etwa 30 s – dann kurz neu suchen
-                proc = await self._scan_proc(25)
-                try:
-                    for _ in range(20):
-                        await asyncio.sleep(1)
-                        devs = await self._objects()
-                        if mac in devs:
-                            break
-                finally:
-                    await self._stop(proc)
-                if mac not in devs:
+                seen = await self._watch_scan(20, until_mac=mac)
+                if mac not in seen:
                     raise BluetoothError("Kopfhörer nicht mehr gefunden – bitte wieder in den Kopplungsmodus versetzen")
-            if not devs[mac]["paired"]:
+                dev = await self.info(mac)
+            if not dev["paired"]:
                 code, out = await self._ctl("pair", mac, timeout=25, agent=True)
                 if "Pairing successful" not in out and "AlreadyExists" not in out:
                     err = re.search(r"Failed to pair: (\S+)", out)

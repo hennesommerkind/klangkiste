@@ -15,9 +15,11 @@ for mac, d in st["devices"].items():
     objs["/org/bluez/hci0/dev_" + mac.replace(":", "_")] = {"org.bluez.Device1": p}
 if "GetAll" in sys.argv:
     path = sys.argv[sys.argv.index("call") + 2]
+    if path.endswith("11_22_33_44_55_07"):
+        sys.stderr.write("Failed to create new json object: Invalid argument\n"); sys.exit(1)
     o = objs.get(path)
     if not o:
         sys.stderr.write("Call failed: Method \"GetAll\" with signature \"s\" on interface \"org.freedesktop.DBus.Properties\" doesn't exist (org.freedesktop.DBus.Error.UnknownObject)\n"); sys.exit(1)
     print(json.dumps({"type": "a{sv}", "data": [o["org.bluez.Device1"]]}))
 else:
-    print(json.dumps({"type": "a{oa{sa{sv}}}", "data": [objs]}))
+    sys.stderr.write("Failed to create new json object: Invalid argument\n"); sys.exit(1)  # wie auf der echten Box
