@@ -32,6 +32,12 @@ HiFiBerry-DAC-Stil, drei Knöpfe (Zurück GPIO 27, Play/Pause GPIO 12, Vor GPIO 
 
 Kartenleser: SDA → GPIO 8, SCK → GPIO 11, MOSI → GPIO 10, MISO → GPIO 9, RST → GPIO 25.
 
+## Drehregler (optional)
+
+KY-040/HW-040 für die Lautstärke: SW → GPIO 22 (Pin 15), CLK → GPIO 23 (Pin 16), „+“ → 3,3 V (Pin 17,
+nicht 5 V), DT → GPIO 24 (Pin 18), GND → Pin 20. Anschlüsse, Schrittweite, Drehrichtung und die
+Funktion beim Drücken (Standard: Stumm / Laut) stehen unter Einstellungen › Knöpfe.
+
 ## Installation
 
 1. Mit dem **Raspberry Pi Imager** „Raspberry Pi OS Lite (64-bit)“ auf eine SD-Karte schreiben.

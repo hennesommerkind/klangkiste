@@ -209,3 +209,4 @@ details.card[open] > summary { margin-bottom: 16px; }
 .legend li { display: flex; align-items: center; gap: 6px; }
 .legend b { color: var(--ink); font-weight: 650; font-variant-numeric: tabular-nums; }
 .legend .sw { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0 12px; }

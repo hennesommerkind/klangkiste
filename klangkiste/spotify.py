@@ -168,13 +168,15 @@ class Spotify:
             await self._post("/player/prev", {"allow_seeking": True})
         elif action == "seek":
             await self._post("/player/seek", {"position": int(float(value) * 1000)})
-        elif action in ("vol_up", "vol_down", "volume"):
+        elif action in ("vol_up", "vol_down", "volume", "vol_delta"):
             async with self._session.get(self.base + "/player/volume") as r:
                 v = await r.json()
             cur, mx = int(v.get("value", 0)), int(v.get("max", 100)) or 100
             limit = round(mx * vmax / 100)
             if action == "volume":
                 new = round(mx * int(float(value)) / 100)
+            elif action == "vol_delta":
+                new = cur + round(mx * float(value) / 100)
             else:
                 new = cur + (1 if action == "vol_up" else -1) * max(1, round(mx * 0.05))
             await self._post("/player/volume", {"volume": max(0, min(limit, new))})

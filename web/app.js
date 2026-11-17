@@ -471,7 +471,17 @@ const viewSettings = run(async () => {
     <div class="actions row" style="margin-top:12px"><button class="btn primary" id="g-save">Speichern</button></div>`)}
   ${sec("buttons", "Knöpfe", `<p class="muted small">Du musst die Box nicht öffnen: „Knopf anlernen“ erkennt selbst, an welchem Anschluss ein Knopf hängt.</p>
     <ul class="list" id="b-list"></ul>
-    <div class="row wrap" style="margin-top:14px"><button class="btn" id="b-learn">${ICON.plus} Knopf anlernen</button><button class="btn primary" id="b-save">Speichern</button></div>`)}
+    <div class="row wrap" style="margin-top:14px"><button class="btn" id="b-learn">${ICON.plus} Knopf anlernen</button><button class="btn primary" id="b-save">Speichern</button></div>
+    <h2 style="margin-top:24px">Drehregler für die Lautstärke</h2>
+    ${c.button_errors.encoder ? `<p><span class="pill bad">Fehler</span> <span class="small">${esc(c.button_errors.encoder)}</span></p>` : ""}
+    ${sw("e-on", "Drehregler benutzen", cfg.encoder.enabled, "Drehen stellt die Lautstärke – auch bei Spotify und Kopfhörern. Das „+“ des Reglers gehört an 3,3 V, nicht an 5 V.")}
+    <div id="e-more">
+      <div class="grid3">${[["clk", "CLK"], ["dt", "DT"], ["sw", "SW (Drücken)"]].map(([k, l]) => `<label class="field"><span>${l}</span><select id="e-${k}">${c.pins.map((p) => `<option value="${p}" ${p === cfg.encoder[k] ? "selected" : ""}>GPIO ${p}</option>`).join("")}</select></label>`).join("")}</div>
+      <label class="field"><span>Beim Drücken</span><select id="e-press"><option value="none">Nichts</option>${Object.entries(c.actions).map(([k, v]) => `<option value="${k}" ${k === cfg.encoder.press ? "selected" : ""}>${v}</option>`).join("")}</select></label>
+      <label class="field"><span>Schritt pro Raste: <b id="e-step-v">${cfg.encoder.step}</b> %</span><input type="range" id="e-step" min="1" max="10" value="${cfg.encoder.step}"></label>
+      ${sw("e-rev", "Drehrichtung umkehren", cfg.encoder.reverse, "Falls Rechtsdrehen leiser macht")}
+    </div>
+    <div class="actions row" style="margin-top:12px"><button class="btn primary" id="e-save">Speichern</button></div>`)}
   ${sec("wifi", "WLAN", `<div id="wifi"><p class="muted">Lade …</p></div>`)}
   ${sec("bt", "Bluetooth-Kopfhörer", `<div id="bt"><p class="muted">Lade …</p></div>`)}
   ${sec("house", "Im Haus hören", `
@@ -532,6 +542,9 @@ const viewSettings = run(async () => {
   };
   paintButtons();
   $("#b-save").onclick = () => save({ buttons: btns });
+  const eMore = () => { $("#e-more").hidden = !$("#e-on").checked; }; eMore(); $("#e-on").onchange = eMore;
+  $("#e-step").oninput = (e) => $("#e-step-v").textContent = e.target.value;
+  $("#e-save").onclick = () => save({ encoder: { enabled: $("#e-on").checked, clk: +$("#e-clk").value, dt: +$("#e-dt").value, sw: +$("#e-sw").value, press: $("#e-press").value, step: +$("#e-step").value, reverse: $("#e-rev").checked } });
   $("#b-learn").onclick = run(async () => {
     openDialog(`<h2>Knopf anlernen</h2><div class="pulse"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg></div><p style="text-align:center">Drück jetzt den Knopf an der Box, den du einrichten möchtest.<br><span class="muted small">Ich warte 15 Sekunden.</span></p>`);
     let r; try { r = await api("/api/buttons/learn", {}); } finally { closeDialog(); }

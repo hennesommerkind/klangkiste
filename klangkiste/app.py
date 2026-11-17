@@ -1,6 +1,7 @@
 """Klangkiste – Hauptprogramm: verbindet Player, Karten, Knöpfe, MQTT, Web."""
 import argparse
 import asyncio
+import threading
 import contextlib
 import json
 import logging
@@ -27,7 +28,7 @@ from .rfid import CardWatcher, MockReader
 from .spotify import Spotify
 
 # Befehle, die bei laufendem Spotify an Spotify gehen
-SPOTIFY_ACTIONS = {"play_pause", "play", "pause", "stop", "next", "prev", "seek", "volume", "vol_up", "vol_down"}
+SPOTIFY_ACTIONS = {"play_pause", "play", "pause", "stop", "next", "prev", "seek", "volume", "vol_up", "vol_down", "vol_delta"}
 
 log = logging.getLogger("klangkiste")
 # Nicht auf die Systemtabelle verlassen: falsche Typen lassen Browser
@@ -53,6 +54,9 @@ class Box:
         self.backup = None
         self.loop = None
         self.clients = set()
+        self._unmute_to = 0
+        self._vol_lock = threading.Lock()
+        self._vol_target, self._vol_time = 0, 0.0
         self.closing = False
         self.learn = None
         self.active_card = None
@@ -323,6 +327,25 @@ class Box:
 
     def _do(self, action, value=None):
         p = self.player
+        if action == "mute":   # Stumm / Laut – gilt für das, was gerade spielt
+            cur = int(self.full_state().get("volume") or 0)
+            if cur > 0:
+                self._unmute_to = cur
+                return self._do("volume", 0)
+            return self._do("volume", self._unmute_to or self.store.config["audio"]["volume_start"])
+        if action == "vol_delta":
+            with self._vol_lock:   # Befehle vom Drehregler nacheinander, nicht durcheinander
+                if self.controller == "spotify":
+                    asyncio.run_coroutine_threadsafe(
+                        self.spotify.command(action, value, p.vmax()), self.loop).result(timeout=8)
+                    return
+                now = time.monotonic()
+                # MPD meldet die neue Lautstärke mit Verzögerung – kurz mit dem eigenen Ziel weiterrechnen
+                base = self._vol_target if now - self._vol_time < 1.5 else int(p.state.get("volume") or 0)
+                self._vol_target = max(0, min(p.vmax(), base + int(value)))
+                self._vol_time = now
+                p.set_volume(self._vol_target)
+            return
         if self.controller == "spotify" and action in SPOTIFY_ACTIONS:
             fut = asyncio.run_coroutine_threadsafe(
                 self.spotify.command(action, value, self.player.vmax()), self.loop)
@@ -805,6 +828,22 @@ def _clean_patch(b, d):
             seen.add(pin)
             btns.append({"pin": pin, "action": x["action"]})
         patch["buttons"] = btns
+    if "encoder" in d:
+        e, cur = d["encoder"], b.store.config["encoder"]
+        out = {"enabled": bool(e.get("enabled", cur["enabled"])), "reverse": bool(e.get("reverse", cur["reverse"])),
+               "step": max(1, min(10, int(e.get("step", cur["step"])))), "press": e.get("press", cur["press"])}
+        for k in ("clk", "dt", "sw"):
+            out[k] = int(e.get(k, cur[k]))
+            if out[k] not in BUTTON_PINS:
+                raise ValueError(f"GPIO {out[k]} ist nicht für den Drehregler frei")
+        if len({out["clk"], out["dt"], out["sw"]}) < 3:
+            raise ValueError("Der Drehregler braucht drei verschiedene Anschlüsse")
+        if out["press"] not in BUTTON_ACTIONS and out["press"] != "none":
+            raise ValueError("Unbekannte Funktion für den Druck auf den Drehregler")
+        used = {int(x["pin"]) for x in patch.get("buttons", b.store.config["buttons"])}
+        if out["enabled"] and used & {out["clk"], out["dt"], out["sw"]}:
+            raise ValueError("Ein Anschluss des Drehreglers ist schon mit einem Knopf belegt")
+        patch["encoder"] = out
     if "wifi" in d:
         w = d["wifi"]
         out = {}
@@ -859,7 +898,7 @@ async def api_config_set(request):
     d = await request.json()
     patch = _clean_patch(b, d)
     b.store.update_config(patch)
-    if "buttons" in patch:
+    if "buttons" in patch or "encoder" in patch:
         await asyncio.to_thread(b.buttons.apply)
     if "mqtt" in patch or "name" in patch:
         b.mqtt.start()

@@ -26,6 +26,8 @@ DEFAULTS = {
         {"pin": 12, "action": "play_pause"},
         {"pin": 5, "action": "next"},
     ],
+    # Drehregler (KY-040/HW-040) für die Lautstärke; „+“ des Reglers an 3,3 V
+    "encoder": {"enabled": True, "clk": 23, "dt": 24, "sw": 22, "step": 3, "press": "mute", "reverse": False},
     "rfid": {"enabled": True, "rst_pin": 25, "spi_bus": 0, "spi_device": 0, "spi_speed": 1000000, "gain": 4},
     "bluetooth": {
         "device": "",        # gemerkter Kopfhörer (MAC)
@@ -62,6 +64,7 @@ BUTTON_ACTIONS = {
     "vol_up": "Lauter",
     "vol_down": "Leiser",
     "stop": "Stopp",
+    "mute": "Stumm / Laut",
     "shutdown": "Ausschalten",
     "announce": "Adresse ansagen",
 }
