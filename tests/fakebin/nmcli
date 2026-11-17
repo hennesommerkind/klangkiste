@@ -1,0 +1,36 @@
+#!/usr/bin/env python3
+"""Attrappe von nmcli. Zustand in $FAKE_NM (JSON)."""
+import json, os, sys
+p = os.environ.get("FAKE_NM", "/tmp/fake_nm.json")
+try: st = json.load(open(p))
+except Exception: st = {"active": None, "hotspot": False, "known": {"Zuhause": "geheim123"}, "pw": {"Nachbar": "nachbar123"}, "visible": {"Zuhause": 80, "Nachbar": 40}, "home_up": False}
+a = sys.argv[1:]
+def save(): json.dump(st, open(p, "w"))
+def esc(x): return x.replace(":", "\\:")
+if a[:4] == ["-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device"]:
+    print("lo:loopback:connected (externally):lo")
+    if st["hotspot"]: print("wlan0:wifi:connected:klangkiste-hotspot")
+    elif st["active"]: print(f"wlan0:wifi:connected:{esc(st['active'])}")
+    else: print("wlan0:wifi:disconnected:")
+elif a[:5] == ["-t", "-f", "NAME,TYPE", "connection", "show"]:
+    for k in st["known"]: print(f"{esc(k)}:802-11-wireless")
+    print("klangkiste-hotspot:802-11-wireless" if st.get("hs_defined") else "lo:loopback")
+elif "wifi" in a and "list" in a:
+    for s, sig in st["visible"].items(): print(f"{esc(s)}:{sig}:WPA2:{'*' if st['active']==s else ' '}")
+elif "connect" in a:
+    ssid = a[a.index("connect") + 1]; pw = a[a.index("password") + 1] if "password" in a else ""
+    if st["hotspot"]: print("Error: device busy", file=sys.stderr); sys.exit(4)
+    if ssid not in st["visible"]: print(f"Error: No network with SSID '{ssid}' found.", file=sys.stderr); sys.exit(10)
+    if st["known"].get(ssid, st.get("pw", {}).get(ssid, pw)) != pw: print("Error: Connection activation failed: Secrets were required, but not provided.", file=sys.stderr); sys.exit(4)
+    st["known"][ssid] = pw; st["active"] = ssid; print(f"Device 'wlan0' successfully activated")
+elif a[:2] == ["connection", "add"]: st["hs_defined"] = True; st["hs_args"] = a
+elif a[:2] == ["connection", "up"]: st["hotspot"] = True; st["active"] = None
+elif a[:2] == ["connection", "down"]:
+    st["hotspot"] = False
+    if st.get("home_up") and "Zuhause" in st["known"]: st["active"] = "Zuhause"
+elif a[:3] == ["connection", "delete", "id"]:
+    n = a[3]
+    if n == "klangkiste-hotspot": st["hs_defined"] = False
+    elif n in st["known"]: del st["known"][n]
+    else: print("Error: unknown connection", file=sys.stderr); sys.exit(10)
+save()

@@ -15,6 +15,13 @@ DEFAULTS = {
         "resume": True,          # Hörspiele an der letzten Stelle fortsetzen
         "pause_on_remove": True,   # Kartenmodus: liegen lassen (True) oder antippen (False)
         "stream_port": 8000,
+        "start_sound": True,   # kurzer Ton, wenn die Box bereit ist
+        "announce_ip": True,   # Adresse nach dem Verbinden ansagen
+    },
+    "wifi": {
+        "hotspot": True,              # eigenes WLAN, wenn kein bekanntes erreichbar ist
+        "hotspot_ssid": "Klangkiste",
+        "hotspot_password": "klangkiste",
     },
     "buttons": [
         {"pin": 27, "action": "prev"},
@@ -58,6 +65,7 @@ BUTTON_ACTIONS = {
     "vol_down": "Leiser",
     "stop": "Stopp",
     "shutdown": "Ausschalten",
+    "announce": "Adresse ansagen",
 }
 
 # Pins, die frei für Knöpfe sind (BCM). Nicht dabei: SPI (7-11), Leser-Reset,
@@ -126,7 +134,11 @@ class Store:
     def public_config(self):
         """Einstellungen ohne Passwörter (für die Oberfläche)."""
         c = copy.deepcopy(self.config)
-        for sec in ("mqtt", "backup"):
+        for sec in ("mqtt", "backup", "wifi"):
+            if sec == "wifi":
+                c[sec]["password_set"] = bool(c[sec].get("hotspot_password"))
+                c[sec]["hotspot_password"] = ""
+                continue
             c[sec]["password_set"] = bool(c[sec].get("password"))
             c[sec]["password"] = ""
         return c

@@ -50,6 +50,19 @@ if [ -n "$bt_missing" ]; then
         || echo "Bluetooth-Pakete ließen sich nicht installieren – die Box läuft auch ohne Kopfhörer."
 fi
 
+# Sprachausgabe für Ansagen: Pico klingt natürlicher (non-free), espeak-ng geht immer
+if ! command -v pico2wave >/dev/null && ! command -v espeak-ng >/dev/null; then
+    say "Sprachausgabe installieren"
+    [ -n "$missing" ] || [ -n "$bt_missing" ] || [ "$UPDATE" = 0 ] || apt-get update -q
+    apt-get install -y -q --no-install-recommends libttspico-utils 2>/dev/null \
+        || apt-get install -y -q --no-install-recommends espeak-ng \
+        || echo "Keine Sprachausgabe verfügbar – Ansagen fallen weg."
+fi
+# WLAN-Verwaltung durch die Klangkiste braucht polkit
+if command -v nmcli >/dev/null && ! dpkg -s polkitd >/dev/null 2>&1; then
+    apt-get install -y -q --no-install-recommends polkitd 2>/dev/null || true
+fi
+
 say "Benutzer und Ordner anlegen"
 id klangkiste >/dev/null 2>&1 || useradd --system --home-dir "$DATA" --shell /usr/sbin/nologin klangkiste
 for g in audio gpio spi bluetooth; do getent group "$g" >/dev/null && usermod -aG "$g" klangkiste; done
@@ -142,6 +155,21 @@ if command -v bluetoothctl >/dev/null; then
     else
         echo "bluez-alsa nicht gefunden – Kopfhörer werden nicht unterstützt."
     fi
+fi
+
+say "WLAN-Verwaltung freigeben"
+if command -v nmcli >/dev/null; then
+    install -d /etc/polkit-1/rules.d
+    cat > /etc/polkit-1/rules.d/50-klangkiste.rules <<'EOF'
+// Die Klangkiste darf WLANs verwalten (Netz wechseln, eigenes Not-WLAN öffnen).
+polkit.addRule(function (action, subject) {
+    if (action.id.indexOf("org.freedesktop.NetworkManager.") === 0 && subject.user === "klangkiste") {
+        return polkit.Result.YES;
+    }
+});
+EOF
+else
+    echo "NetworkManager nicht gefunden – das eigene Not-WLAN steht nicht zur Verfügung."
 fi
 
 say "Dienste einrichten"

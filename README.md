@@ -12,6 +12,10 @@ einrichten, sichern.
   die Knöpfe steuern immer die Quelle, die zuletzt gespielt hat
 - **Bluetooth-Kopfhörer** (bluez-alsa): koppeln in der Oberfläche, automatisch verbinden,
   Ton nur über Kopfhörer, Pause beim Trennen, eigene Höchstlautstärke
+- **Not-WLAN**: ohne bekanntes Netz öffnet die Box nach einer Minute ein eigenes WLAN
+  („Klangkiste“, Kennwort einstellbar), Oberfläche dann unter http://10.42.0.1
+- **Ansagen**: Startton, die Box sagt nach dem Verbinden ihre IP-Adresse
+  (jederzeit: Play/Pause drei Sekunden halten)
 - **Update-Knopf** in der Oberfläche: holt die neue Version und spielt auch Systemänderungen ein
 - **Sicherung** zu IONOS HiDrive auf Knopfdruck oder nach Zeitplan, mit Wiederherstellung
 - **Hörspiele und Musik getrennt**, Serien mit Folgen als Unterordner

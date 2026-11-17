@@ -37,12 +37,14 @@ class Buttons:
                     continue
                 seen.add(pin)
                 try:
-                    hold = 2.0 if action == "shutdown" else 0.4
+                    hold = {"shutdown": 2.0, "play_pause": 3.0}.get(action, 0.4)
                     dev = Button(pin, pull_up=True, bounce_time=0.05, hold_time=hold,
                                  hold_repeat=action in ("vol_up", "vol_down"))
                     if action == "shutdown":
                         dev.when_held = lambda a=action: self.dispatch(a)
                     else:
+                        if action == "play_pause":  # drei Sekunden halten: Adresse ansagen
+                            dev.when_held = lambda: self.dispatch("announce")
                         dev.when_pressed = lambda a=action: self.dispatch(a)
                         if action in ("vol_up", "vol_down"):
                             dev.when_held = lambda a=action: self.dispatch(a)

@@ -362,7 +362,7 @@ function unknownCard(id) {
   $("#bx").onclick = hideBanner; $("#bz").onclick = () => { hideBanner(); cardDialog(id); };
   clearTimeout(S.bannerT); S.bannerT = setTimeout(hideBanner, 20000);
 }
-const CMD = { play_pause: "Play / Pause", next: "Nächster Titel", prev: "Vorheriger Titel", vol_up: "Lauter", vol_down: "Leiser", stop: "Stopp", shutdown: "Ausschalten" };
+const CMD = { play_pause: "Play / Pause", next: "Nächster Titel", prev: "Vorheriger Titel", vol_up: "Lauter", vol_down: "Leiser", stop: "Stopp", shutdown: "Ausschalten", announce: "Adresse ansagen" };
 const cardDialog = run(async (id = null, card = null) => {
   const lib = await api("/api/library");
   const t = card?.type || "folder";
@@ -425,10 +425,13 @@ const viewSettings = run(async () => {
       <label class="choice"><input type="radio" name="g-mode" value="tap" ${cfg.audio.pause_on_remove ? "" : "checked"}><span><b>Antippen</b><br><span class="muted small">Karte kurz auflegen startet. Wegnehmen ändert nichts, Pause über den Knopf.</span></span></label>
     </div>
     ${sw("g-resume", "Hörspiele fortsetzen", cfg.audio.resume, "Hörspiele gehen an der letzten Stelle weiter, auch nach einer anderen Karte. Musik beginnt immer von vorn.")}
+    ${sw("g-chime", "Startton", cfg.audio.start_sound, "Kurzer Ton, sobald die Box nach dem Einschalten bereit ist")}
+    ${sw("g-ip", "Adresse ansagen", cfg.audio.announce_ip, "Nach dem Verbinden mit dem WLAN sagt die Box ihre Adresse. Jederzeit: Play/Pause drei Sekunden halten.")}
     <div class="actions row" style="margin-top:12px"><button class="btn primary" id="g-save">Speichern</button></div>`)}
   ${sec("buttons", "Knöpfe", `<p class="muted small">Du musst die Box nicht öffnen: „Knopf anlernen“ erkennt selbst, an welchem Anschluss ein Knopf hängt.</p>
     <ul class="list" id="b-list"></ul>
     <div class="row wrap" style="margin-top:14px"><button class="btn" id="b-learn">${ICON.plus} Knopf anlernen</button><button class="btn primary" id="b-save">Speichern</button></div>`)}
+  ${sec("wifi", "WLAN", `<div id="wifi"><p class="muted">Lade …</p></div>`)}
   ${sec("bt", "Bluetooth-Kopfhörer", `<div id="bt"><p class="muted">Lade …</p></div>`)}
   ${sec("house", "Im Haus hören", `
     <h2>MusicCast</h2><p>Die Box stellt ihren Ton als Stream bereit. Home Assistant kann ihn auf jedem MusicCast-Gerät abspielen. Der Ton kommt dort einige Sekunden verzögert an.</p>
@@ -469,13 +472,13 @@ const viewSettings = run(async () => {
       <li><div class="grow"><b>Speicher</b><span>${size(sys.disk.free)} von ${size(sys.disk.total)} frei</span></div></li>
       ${sys.temperature ? `<li><div class="grow"><b>Temperatur</b><span>${String(sys.temperature).replace(".", ",")} °C</span></div></li>` : ""}
       <li><div class="grow"><b>Abspieler</b><span>${sys.mpd ? "läuft" : "nicht erreichbar"}</span></div></li></ul>
-    <div class="row wrap" style="margin-top:14px"><button class="btn" data-p="reboot">Neu starten</button><button class="btn danger" data-p="shutdown">Ausschalten</button></div>`)}`;
+    <div class="row wrap" style="margin-top:14px"><button class="btn" id="s-say">${ICON.vol} Adresse ansagen</button><button class="btn" data-p="reboot">Neu starten</button><button class="btn danger" data-p="shutdown">Ausschalten</button></div>`)}`;
   $$("details.card").forEach((d) => d.addEventListener("toggle", () => { if (d.open) { S.openSection = d.dataset.s; $$("details.card").forEach((o) => { if (o !== d) o.open = false; }); } }));
   const save = (patch, msg = "Gespeichert") => run(async () => { await api("/api/config", patch); toast(msg); viewSettings(); })();
 
   // Allgemein
   for (const k of ["vs", "vm"]) $("#g-" + k).oninput = (e) => $("#g-" + k + "-v").textContent = e.target.value;
-  $("#g-save").onclick = () => save({ name: $("#g-name").value, audio: { volume_start: Math.min(+$("#g-vs").value, +$("#g-vm").value), volume_max: +$("#g-vm").value, resume: $("#g-resume").checked, pause_on_remove: $('[name="g-mode"]:checked').value === "place" } });
+  $("#g-save").onclick = () => save({ name: $("#g-name").value, audio: { volume_start: Math.min(+$("#g-vs").value, +$("#g-vm").value), volume_max: +$("#g-vm").value, resume: $("#g-resume").checked, pause_on_remove: $('[name="g-mode"]:checked').value === "place", start_sound: $("#g-chime").checked, announce_ip: $("#g-ip").checked } });
 
   // Knöpfe
   let btns = cfg.buttons.map((b) => ({ ...b }));
@@ -497,8 +500,9 @@ const viewSettings = run(async () => {
     else { btns.push({ pin: r.pin, action: "play_pause" }); paintButtons(); toast(`Knopf an GPIO ${r.pin} gefunden – Funktion wählen und speichern`); }
   });
 
-  // Kopfhörer
+  // Kopfhörer, WLAN
   api("/api/bluetooth").then(paintBT).catch(() => {});
+  api("/api/network").then((n) => paintWifi(n, cfg)).catch(() => {});
 
   // Haus
   fetch("/api/homeassistant").then((r) => r.text()).then((t) => { if ($("#h-ha")) $("#h-ha").textContent = t; });
@@ -531,8 +535,50 @@ const viewSettings = run(async () => {
 
   // System
   paintUpdate(sys.update_info || {}, sys);
+  $("#s-say").onclick = run(async () => { await api("/api/system", { action: "announce" }); if (!sys.tts) toast("Auf der Box ist noch keine Sprachausgabe installiert – ein Update richtet sie ein", "error"); });
   $$("[data-p]").forEach((b) => b.onclick = run(async () => { const a = b.dataset.p; if (await ask(a === "reboot" ? "Box neu starten?" : "Box ausschalten?", a === "reboot" ? "Die Wiedergabe stoppt, nach etwa einer Minute ist die Box wieder da." : "Zum Einschalten musst du danach kurz den Strom trennen.", a === "reboot" ? "Neu starten" : "Ausschalten", a !== "reboot")) { await api("/api/system", { action: a }); toast(a === "reboot" ? "Die Box startet neu …" : "Die Box schaltet sich aus …"); } }));
 });
+function paintWifi(n, cfg) {
+  const el = $("#wifi"); if (!el) return;
+  if (!n.available) { el.innerHTML = `<p class="muted">Die WLAN-Verwaltung braucht NetworkManager. Der ist auf dieser Box nicht vorhanden.</p>`; return; }
+  el.innerHTML = `
+    <div class="status-line"><span class="pill ${n.connected ? "ok" : n.hotspot ? "accent" : "bad"}">${n.connected ? "Verbunden" : n.hotspot ? "Eigenes WLAN aktiv" : "Kein Netzwerk"}</span>
+      <span class="small muted">${n.connected ? esc(n.ssid) + " · " + esc(n.ip) : n.hotspot ? `„${esc(n.hotspot_ssid)}“ · ${esc(n.ip)}` : ""}</span></div>
+    ${n.saved.length ? `<p class="small muted" style="margin-bottom:4px">Bekannte WLANs – die Box verbindet sich mit dem ersten, das sie findet:</p><ul class="list">${n.saved.map((s, i) => `<li><div class="grow"><b style="font-weight:600">${esc(s)}</b>${s === n.ssid ? "<span>aktuell verbunden</span>" : ""}</div><button class="iconbtn" data-wdel="${i}" aria-label="WLAN vergessen" ${s === n.ssid ? "disabled" : ""}>${ICON.trash}</button></li>`).join("")}</ul>` : ""}
+    <button class="btn" id="w-add" style="margin-top:10px">${ICON.plus} WLAN hinzufügen</button>
+    <h2 style="margin-top:24px">Eigenes WLAN als Notlösung</h2>
+    <p class="small muted">Findet die Box nach dem Einschalten etwa eine Minute lang kein bekanntes WLAN, öffnet sie ein eigenes. Verbinde dich damit und öffne <b>http://10.42.0.1</b>, um ihr ein WLAN beizubringen. Die Box sagt das auch an. Solange niemand die Oberfläche benutzt, sucht sie alle fünf Minuten erneut nach bekannten WLANs.</p>
+    <label class="switch"><span>Eigenes WLAN öffnen, wenn nötig</span><input type="checkbox" id="w-hs" ${n.hotspot_enabled ? "checked" : ""}></label>
+    <div class="grid2"><label class="field"><span>Name</span><input type="text" id="w-ssid" value="${esc(n.hotspot_ssid)}" maxlength="32"></label>
+    <label class="field"><span>Kennwort (mind. 8 Zeichen)</span><input type="password" id="w-pw" placeholder="${n.hotspot_password_set ? "gespeichert – leer lassen zum Behalten" : ""}" autocomplete="new-password"></label></div>
+    <button class="btn small" id="w-save">Speichern</button>`;
+  $$("[data-wdel]", el).forEach((b) => b.onclick = run(async () => { const name = n.saved[b.dataset.wdel]; if (await ask("WLAN vergessen?", `„${name}“ wird gelöscht. Die Box verbindet sich dann nicht mehr von selbst damit.`, "Vergessen", true)) paintWifi(await api("/api/network/forget", { name }), cfg); }));
+  $("#w-save").onclick = run(async () => { await api("/api/config", { wifi: { hotspot: $("#w-hs").checked, hotspot_ssid: $("#w-ssid").value.trim(), hotspot_password: $("#w-pw").value } }); toast("Gespeichert"); paintWifi(await api("/api/network"), cfg); });
+  $("#w-add").onclick = run(async () => {
+    openDialog(`<h2>WLAN hinzufügen</h2><p class="muted">Suche WLANs …</p>`);
+    let nets = []; try { nets = await api("/api/network/scan", {}); } catch {}
+    openDialog(`<form method="dialog"><h2>WLAN hinzufügen</h2>
+      <label class="field"><span>WLAN</span><select id="wn">${nets.map((x) => `<option value="${esc(x.ssid)}">${esc(x.ssid)} ${x.signal >= 70 ? "▂▄▆█" : x.signal >= 45 ? "▂▄▆" : x.signal >= 25 ? "▂▄" : "▂"}${x.secure ? " 🔒" : ""}</option>`).join("")}<option value="">Anderes WLAN (Name eingeben) …</option></select></label>
+      <label class="field" id="wn2f" ${nets.length ? "hidden" : ""}><span>Name des WLANs</span><input type="text" id="wn2" autocomplete="off"></label>
+      <label class="field"><span>Kennwort</span><input type="password" id="wp" autocomplete="new-password"></label>
+      <p class="small muted">Die Box wechselt sofort in dieses WLAN und ist danach unter einer neuen Adresse erreichbar. Sie sagt die Adresse an. Klappt die Verbindung nicht, bleibt sie im bisherigen Netz${n.hotspot ? " bzw. öffnet wieder ihr eigenes WLAN" : ""}.</p>
+      <div class="actions"><button class="btn" type="button" id="wx">Abbrechen</button><button class="btn primary" id="wok">Verbinden</button></div></form>`);
+    const sel = $("#wn", dialog); sel.onchange = () => $("#wn2f", dialog).hidden = sel.value !== "";
+    $("#wx", dialog).onclick = closeDialog;
+    $("form", dialog).onsubmit = (e) => {
+      e.preventDefault();
+      const ssid = sel.value || $("#wn2", dialog).value.trim(), password = $("#wp", dialog).value;
+      if (!ssid) return toast("Bitte ein WLAN wählen", "error");
+      $("#wok", dialog).disabled = true; $("#wok", dialog).textContent = "Verbinde …";
+      api("/api/network/connect", { ssid, password })
+        .then((r) => { closeDialog(); toast(`Verbunden mit „${ssid}“`); paintWifi(r, cfg); })
+        .catch((err) => {
+          if (/nicht erreichbar/.test(err.message)) { closeDialog(); openDialog(`<h2>Box wechselt das WLAN</h2><p>Die Box verbindet sich mit „${esc(ssid)}“ und ist darum hier nicht mehr erreichbar. Wechsle mit deinem Gerät ebenfalls in dieses WLAN und öffne die Adresse, die die Box ansagt.</p><div class="actions"><button class="btn primary" onclick="document.getElementById('dialog').close()">OK</button></div>`); }
+          else { $("#wok", dialog).disabled = false; $("#wok", dialog).textContent = "Verbinden"; toast(err.message, "error"); }
+        });
+    };
+  });
+}
 function paintBT(b) {
   const el = $("#bt"); if (!el) return;
   if (!b.available) { el.innerHTML = `<p class="muted">Bluetooth ist auf dieser Box noch nicht eingerichtet. Ein Update unter „System“ richtet es ein.</p>`; return; }

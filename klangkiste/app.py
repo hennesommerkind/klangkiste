@@ -15,6 +15,8 @@ from aiohttp import web
 from . import __version__, system
 from .backup import Backup, BackupError
 from .bluetooth import Bluetooth, BluetoothError
+from . import sounds
+from .network import HOTSPOT_IP, Network, NetworkError
 from .buttons import Buttons
 from .config import BUTTON_ACTIONS, BUTTON_PINS, Store
 from .library import IMAGES, Library, LibraryError
@@ -54,6 +56,8 @@ class Box:
         self.last_unknown = None
         self.spotify = Spotify(self._on_spotify, args.spotify_url)
         self.bluetooth = Bluetooth(self.store, self._on_headphones)
+        self._activity = time.monotonic()
+        self.network = Network(self.store, self._on_network, self.last_activity)
         self.controller = "box"          # wer gerade gesteuert wird: „box“ (Karten) oder „spotify“
         self.resume_after_spotify = False
         self.update_info = {}
@@ -74,6 +78,8 @@ class Box:
         asyncio.create_task(self._startup_volume())
         self.spotify.start()
         self.bluetooth.start()
+        if not self.mock:
+            self.network.start()
         asyncio.create_task(self._spotify_output(False))
 
     def _init_hardware(self):
@@ -105,6 +111,8 @@ class Box:
             if self.player.state.get("state") != "offline":
                 await asyncio.to_thread(self.player.set_headphones, self.bluetooth.connected)
                 await asyncio.to_thread(self.player.set_volume, self.store.config["audio"]["volume_start"])
+                if self.store.config["audio"]["start_sound"] and not self.mock:
+                    await asyncio.to_thread(sounds.chime, self.store.config["audio"]["volume_start"])
                 return
             await asyncio.sleep(1)
 
@@ -124,6 +132,7 @@ class Box:
         app["updates"].cancel()
         await self.spotify.stop()
         self.bluetooth.stop()
+        self.network.stop()
         if self.watcher:
             self.watcher.stop()
         self.buttons.close()
@@ -192,6 +201,47 @@ class Box:
         full = self.full_state()
         self._emit("state", full)
         self.mqtt.publish_state(full)
+
+    # ---------- Netzwerk und Ansagen ----------
+    def last_activity(self):
+        return time.monotonic() if self.clients else self._activity
+
+    def _on_network(self, kind, info):
+        """Läuft im Ereignis-Thread."""
+        if kind == "connected" and self.store.config["audio"]["announce_ip"]:
+            self.loop.run_in_executor(None, self.announce, False)
+        elif kind == "hotspot":
+            ssid = self.store.config["wifi"]["hotspot_ssid"]
+            self.loop.run_in_executor(None, self._say_paused,
+                                      f"Kein bekanntes WLAN gefunden. Verbinde dich mit dem WLAN {ssid} "
+                                      f"und öffne im Browser {sounds.speakable_ip(HOTSPOT_IP)}.")
+        self._emit("network", {"kind": kind, "info": info})
+
+    def _say_paused(self, text):
+        """Ansage sprechen; laufende Wiedergabe dafür kurz anhalten."""
+        was_playing = self.controller == "box" and self.player.state.get("state") == "play"
+        if was_playing:
+            self.player.pause()
+        vol = max(25, min(self.player.vmax(), self.player.state.get("volume") or self.store.config["audio"]["volume_start"]))
+        ok = sounds.say(text, vol)
+        if was_playing:
+            self.player.play()
+        return ok
+
+    def announce(self, force=True):
+        """Adresse ansagen (nach dem Verbinden oder Play/Pause drei Sekunden halten)."""
+        if self.network.hotspot:
+            ssid = self.store.config["wifi"]["hotspot_ssid"]
+            text = f"Ich bin im eigenen WLAN {ssid}. Adresse {sounds.speakable_ip(HOTSPOT_IP)}."
+        else:
+            ip = system.ip_address()
+            if not ip:
+                text = "Ich habe gerade keine Netzwerkverbindung."
+            else:
+                text = f"Meine Adresse ist {sounds.speakable_ip(ip)}."
+        log.info("Ansage: %s", text)
+        if not self._say_paused(text) and force:
+            self.toast("Keine Sprachausgabe installiert – bitte ein Update einspielen")
 
     def _on_headphones(self, connected, name):
         """Läuft im Ereignis-Thread: Ausgabe von Box und Spotify umschalten."""
@@ -295,6 +345,8 @@ class Box:
             self._take_over_from_spotify()
             self.active_card = None
             p.play_url(value)
+        elif action == "announce":
+            self.announce(True)
         elif action == "shutdown":
             p.stop()
             if not self.mock:
@@ -382,6 +434,8 @@ def ok(data=None):
 
 @web.middleware
 async def guard(request, handler):
+    if request.path.startswith("/api/"):
+        request.app["box"]._activity = time.monotonic()
     # Schutz vor fremden Webseiten, die im Heimnetz Befehle absetzen wollen
     if request.method != "GET":
         origin = request.headers.get("Origin")
@@ -700,7 +754,7 @@ def _clean_patch(b, d):
         for k in ("volume_start", "volume_max", "volume_step"):
             if k in a:
                 out[k] = max(1, min(100, int(a[k])))
-        for k in ("resume", "pause_on_remove"):
+        for k in ("resume", "pause_on_remove", "start_sound", "announce_ip"):
             if k in a:
                 out[k] = bool(a[k])
         patch["audio"] = out
@@ -717,6 +771,22 @@ def _clean_patch(b, d):
             seen.add(pin)
             btns.append({"pin": pin, "action": x["action"]})
         patch["buttons"] = btns
+    if "wifi" in d:
+        w = d["wifi"]
+        out = {}
+        if "hotspot" in w:
+            out["hotspot"] = bool(w["hotspot"])
+        if w.get("hotspot_ssid") is not None:
+            ssid = str(w["hotspot_ssid"]).strip()
+            if not 1 <= len(ssid.encode()) <= 32:
+                raise ValueError("Der WLAN-Name braucht 1 bis 32 Zeichen")
+            out["hotspot_ssid"] = ssid
+        if w.get("hotspot_password"):
+            pw = str(w["hotspot_password"])
+            if not 8 <= len(pw) <= 63:
+                raise ValueError("Das WLAN-Kennwort braucht 8 bis 63 Zeichen")
+            out["hotspot_password"] = pw
+        patch["wifi"] = out
     if "bluetooth" in d:
         bt = d["bluetooth"]
         out = {}
@@ -801,6 +871,34 @@ async def api_bt_action(request):
     return ok(await bt.status())
 
 
+# ---------- WLAN ----------
+@routes.get("/api/network")
+async def api_net(request):
+    return ok(await box(request).network.status())
+
+
+@routes.post("/api/network/{action}")
+async def api_net_action(request):
+    net = box(request).network
+    a = request.match_info["action"]
+    d = await request.json() if request.can_read_body else {}
+    try:
+        if a == "scan":
+            return ok(await net.scan())
+        if a == "connect":
+            ssid = str(d.get("ssid", "")).strip()
+            if not ssid:
+                raise NetworkError("Bitte ein WLAN wählen")
+            await net.connect(ssid, str(d.get("password", "")))
+        elif a == "forget":
+            await net.forget(str(d["name"]))
+        else:
+            raise web.HTTPNotFound()
+    except NetworkError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    return ok(await net.status())
+
+
 # ---------- Sicherung ----------
 @routes.get("/api/backup/status")
 async def api_backup_status(request):
@@ -869,6 +967,7 @@ async def api_system(request):
     b = box(request)
     info = await asyncio.to_thread(system.info, __version__)
     info.update({"disk": b.library.disk(), "mock": b.mock, "mpd": b.player.state.get("state") != "offline",
+                 "tts": sounds.tts_engine(),
                  "spotify": b.spotify.available, "update_info": b.update_info,
                  "stream_url": f"http://{info['ip'] or info['hostname']}:{b.store.config['audio']['stream_port']}/klangkiste.mp3"})
     return ok(info)
@@ -878,6 +977,9 @@ async def api_system(request):
 async def api_system_action(request):
     b = box(request)
     action = (await request.json())["action"]
+    if action == "announce":
+        asyncio.get_running_loop().run_in_executor(None, b.announce, True)
+        return ok()
     if action == "check_update":
         b.update_info = await system.check_updates()
         b.emit("state", b.full_state())
