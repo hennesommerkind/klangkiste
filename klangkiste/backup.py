@@ -152,7 +152,7 @@ class Backup:
                 if self.cfg["include_music"]:
                     self._set(step="Sichere Musik …")
                     await self._run("sync", str(self.store.music), self._remote("musik"),
-                                    "--transfers", "2", "--exclude", ".*", env=env, timeout=6 * 3600)
+                                    "--transfers", "2", "--exclude", ".*.part", env=env, timeout=6 * 3600)
                 names = await self._list(env)
                 for old in names[int(self.cfg["keep"]):]:
                     await self._run("deletefile", self._remote("einstellungen", old), env=env, timeout=120)

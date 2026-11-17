@@ -132,9 +132,6 @@ input[type=range]::-moz-range-thumb { width: 18px; height: 18px; border-radius: 
 .folder .badge svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 2.4; }
 .detail-head { display: grid; grid-template-columns: 120px 1fr; gap: 18px; align-items: center; margin-bottom: 18px; }
 @media (min-width: 620px) { .detail-head { grid-template-columns: 180px 1fr; } }
-.detail-head .cover { cursor: pointer; }
-.detail-head .cover::after { content: "Bild ändern"; position: absolute; inset: auto 0 0 0; background: rgba(0,0,0,.5); font-size: .72rem; font-weight: 600; padding: 4px; text-align: center; opacity: 0; transition: opacity .15s; }
-.detail-head .cover:hover::after { opacity: 1; }
 .drop { border: 2px dashed var(--line); border-radius: var(--radius); padding: 22px; text-align: center; color: var(--muted); cursor: pointer; transition: .15s; margin-bottom: 16px; }
 .drop.over, .drop:hover { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
 .drop progress { width: 100%; height: 10px; margin-top: 10px; accent-color: var(--accent); }
@@ -188,3 +185,8 @@ details.card[open] > summary { margin-bottom: 16px; }
 #nav button.dot::after { content: ""; position: absolute; top: 9px; left: calc(50% + 8px); width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--surface); }
 @media (min-width: 860px) { #nav button.dot::after { top: 50%; left: auto; right: 14px; transform: translateY(-50%); } }
 .list ul li { display: list-item; border: 0; padding: 2px 0; }
+.sorter .list li { gap: 6px; }
+.sorter .iconbtn[disabled] { opacity: .25; pointer-events: none; }
+@media (max-width: 400px) { #nav button { font-size: .66rem; } }
+.cvrow { justify-content: center; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
+@media (max-width: 619px) { .cvrow .btn { padding: 6px 10px; font-size: .8rem; } .cvrow .iconbtn { width: 32px !important; height: 32px !important; } }

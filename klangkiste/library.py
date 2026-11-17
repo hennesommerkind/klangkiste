@@ -1,4 +1,5 @@
 """Musikverwaltung: Ordner, Titel, Cover, Uploads."""
+import json
 import os
 import re
 import shutil
@@ -8,6 +9,7 @@ AUDIO = {".mp3", ".m4a", ".m4b", ".aac", ".ogg", ".oga", ".opus", ".flac", ".wav
 IMAGES = {".jpg", ".jpeg", ".png", ".webp"}
 COVER_NAMES = ("cover", "folder", "front", "album")
 CATEGORIES = ("Hörspiele", "Musik")
+ORDER_FILE = ".reihenfolge.json"   # eigene Reihenfolge pro Ordner; wandert mit Sicherung und Umbenennen mit
 
 
 class LibraryError(ValueError):
@@ -55,9 +57,53 @@ class Library:
     def rel(self, p):
         return str(Path(p).relative_to(self.root)).replace(os.sep, "/")
 
+    # ---------- Reihenfolge ----------
+    @staticmethod
+    def _order(d):
+        try:
+            data = json.loads((d / ORDER_FILE).read_text("utf-8"))
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _write_order(self, d, data):
+        data = {k: v for k, v in data.items() if v}
+        p = d / ORDER_FILE
+        if not data:
+            p.unlink(missing_ok=True)
+            return
+        tmp = d / (ORDER_FILE + ".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), "utf-8")
+        os.replace(tmp, p)
+
+    def _sorted(self, d, items, kind):
+        """Eigene Reihenfolge zuerst, alles Übrige natürlich sortiert dahinter."""
+        idx = {n: i for i, n in enumerate(self._order(d).get(kind) or [])}
+        return sorted(items, key=lambda x: (0, idx[x.name]) if x.name in idx else (1, _natural(x.name)))
+
     def _audio_files(self, d):
-        return sorted((f for f in d.iterdir() if f.is_file() and f.suffix.lower() in AUDIO),
-                      key=lambda f: _natural(f.name))
+        return self._sorted(d, [f for f in d.iterdir() if f.is_file() and f.suffix.lower() in AUDIO], "tracks")
+
+    def _subdirs(self, d):
+        return self._sorted(d, [y for y in d.iterdir() if y.is_dir() and not y.name.startswith(".")], "folders")
+
+    def set_order(self, folder, kind, names):
+        if kind not in ("tracks", "folders"):
+            raise LibraryError("Unbekannte Art")
+        d = self.path(folder)
+        if not d.is_dir():
+            raise LibraryError("Ordner nicht gefunden")
+        existing = {x.name for x in (self._audio_files(d) if kind == "tracks" else self._subdirs(d))}
+        names = [n for n in dict.fromkeys(str(n) for n in names) if n in existing]
+        data = self._order(d)
+        data[kind] = names
+        self._write_order(d, data)
+
+    def _rename_in_order(self, d, kind, old, new):
+        data = self._order(d)
+        if old in (data.get(kind) or []):
+            data[kind] = [new if n == old else n for n in data[kind]]
+            self._write_order(d, data)
 
     def find_cover(self, d):
         imgs = [f for f in d.iterdir() if f.is_file() and f.suffix.lower() in IMAGES]
@@ -67,25 +113,28 @@ class Library:
         return imgs[0]
 
     def folders(self):
-        """Alle Ordner (auch leere und verschachtelte), mit Anzahl direkter Titel."""
+        """Alle Ordner in Abspielreihenfolge (Eltern vor Kindern), mit Titelzahlen."""
         out = []
-        for dirpath, dirnames, filenames in os.walk(self.root):
-            dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
-            d = Path(dirpath)
-            if d == self.root:
-                continue
-            tracks = [f for f in filenames if Path(f).suffix.lower() in AUDIO]
-            size = sum((d / f).stat().st_size for f in tracks)
-            if self.is_category(self.rel(d)):
-                continue
-            out.append({
-                "name": self.rel(d),
-                "tracks": len(tracks),
-                "size": size,
-                "cover": True,
-                "subfolders": len(dirnames),
-            })
-        out.sort(key=lambda f: _natural(f["name"]))
+
+        def walk(d):
+            for sub in self._subdirs(d):
+                rel = self.rel(sub)
+                files = [f for f in sub.iterdir() if f.is_file()]
+                tracks = [f for f in files if f.suffix.lower() in AUDIO]
+                img = self.find_cover(sub)
+                if not self.is_category(rel):
+                    out.append({
+                        "name": rel,
+                        "tracks": len(tracks),
+                        "size": sum(f.stat().st_size for f in tracks),
+                        "cover": True,
+                        "cover_v": int(img.stat().st_mtime) if img else 0,
+                        "custom_cover": bool(img and img.stem.lower() == "cover"),
+                        "subfolders": sum(1 for y in sub.iterdir() if y.is_dir() and not y.name.startswith(".")),
+                    })
+                walk(sub)
+
+        walk(self.root)
         for f in out:  # Titel einschließlich Unterordnern
             pre = f["name"] + "/"
             f["total_tracks"] = f["tracks"] + sum(g["tracks"] for g in out if g["name"].startswith(pre))
@@ -98,8 +147,7 @@ class Library:
 
         def walk(x):
             out.extend(self.rel(f) for f in self._audio_files(x))
-            for sub in sorted((y for y in x.iterdir() if y.is_dir() and not y.name.startswith(".")),
-                              key=lambda y: _natural(y.name)):
+            for sub in self._subdirs(x):
                 walk(sub)
 
         walk(d)
@@ -126,6 +174,7 @@ class Library:
         if dst.exists():
             raise LibraryError("Diesen Namen gibt es schon")
         src.rename(dst)
+        self._rename_in_order(src.parent, "folders", src.name, dst.name)
         return self.rel(dst)
 
     def delete_folder(self, folder):
@@ -171,6 +220,7 @@ class Library:
         if dst.exists():
             raise LibraryError("Diesen Namen gibt es schon")
         src.rename(dst)
+        self._rename_in_order(src.parent, "tracks", src.name, dst.name)
 
     def upload_target(self, folder, filename):
         """Zielpfad für einen Upload; erlaubt Audio- und Bilddateien."""
@@ -212,9 +262,7 @@ class Library:
             except Exception:
                 continue
         if _depth < 3:
-            subs = sorted((y for y in d.iterdir() if y.is_dir() and not y.name.startswith(".")),
-                          key=lambda y: _natural(y.name))
-            for sub in subs[:3]:
+            for sub in self._subdirs(d)[:3]:
                 data, mime = self.cover_bytes(self.rel(sub), _depth + 1)
                 if data is not None:
                     return data, mime
@@ -229,6 +277,12 @@ class Library:
             if f.is_file() and f.stem.lower() == "cover" and f.suffix.lower() in IMAGES:
                 f.unlink()
         (d / f"cover{suffix}").write_bytes(data)
+
+    def remove_cover(self, folder):
+        d = self.path(folder)
+        for f in d.iterdir():
+            if f.is_file() and f.stem.lower() == "cover" and f.suffix.lower() in IMAGES:
+                f.unlink()
 
     def disk(self):
         u = shutil.disk_usage(self.root)

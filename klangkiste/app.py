@@ -469,6 +469,13 @@ async def api_rename(request):
     return ok({"name": new})
 
 
+@routes.post("/api/library/order")
+async def api_order(request):
+    d = await request.json()
+    box(request).library.set_order(d["folder"], d["kind"], d["items"])
+    return ok()
+
+
 @routes.post("/api/library/move")
 async def api_move(request):
     d = await request.json()
@@ -539,6 +546,12 @@ async def api_cover(request):
     if isinstance(data, Path):
         return web.FileResponse(data, headers=headers)
     return web.Response(body=data, content_type=mime or "image/jpeg", headers=headers)
+
+
+@routes.delete("/api/cover")
+async def api_cover_delete(request):
+    box(request).library.remove_cover(request.query["folder"])
+    return ok()
 
 
 @routes.post("/api/cover")

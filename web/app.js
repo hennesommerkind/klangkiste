@@ -15,6 +15,10 @@ const ICON = {
   edit: '<svg class="icon" viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
   back: '<svg class="icon" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>',
   plus: '<svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
+  sort: '<svg class="icon" viewBox="0 0 24 24"><path d="M7 4v16M3 8l4-4 4 4M17 20V4M13 16l4 4 4-4"/></svg>',
+  up: '<svg class="icon" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg>',
+  down: '<svg class="icon" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>',
+  camera: '<svg class="icon" viewBox="0 0 24 24"><path d="M4 8a2 2 0 0 1 2-2h2l2-2h4l2 2h2a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><circle cx="12" cy="13" r="3.5"/></svg>',
   move: '<svg class="icon" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M10 13h6M13 10l3 3-3 3"/></svg>',
   vol: '<svg class="icon" viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4zM15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>',
   music: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>',
@@ -83,7 +87,7 @@ function go(view, folder = null) {
   render(); window.scrollTo(0, 0);
 }
 $$("#nav button").forEach((b) => b.onclick = () => go(b.dataset.view));
-function render() { ({ now: viewNow, music: S.folder ? viewFolder : viewMusic, cards: viewCards, settings: viewSettings }[S.view])(); renderMini(); }
+function render() { ({ now: viewNow, hoerspiele: S.folder ? viewFolder : viewMusic, musik: S.folder ? viewFolder : viewMusic, cards: viewCards, settings: viewSettings }[S.view])(); renderMini(); }
 
 // ---------- Live-Status ----------
 function elapsedNow() { const s = S.state; return s.state === "play" ? Math.min(s.duration || 1e9, s.elapsed + (performance.now() - S.synced) / 1000) : s.elapsed || 0; }
@@ -189,35 +193,67 @@ const isMusic = (p) => catOf(p) === "Musik";
 const subLabel = (f) => f.subfolders ? `${f.subfolders} ${isMusic(f.name) ? (f.subfolders === 1 ? "Ordner" : "Ordner") : (f.subfolders === 1 ? "Folge" : "Folgen")}` : `${f.tracks} Titel`;
 function tiles(list) {
   return `<div class="folders">${list.map((f) => `<button class="folder" data-f="${esc(f.name)}">
-    <div style="position:relative">${cover(f.name, f.cover)}${f.cards.length ? `<span class="badge">${ICON.card.replace('class="icon"', "")} Karte</span>` : ""}</div>
+    <div style="position:relative">${cover(f.name, f.cover, "&v=" + f.cover_v)}${f.cards.length ? `<span class="badge">${ICON.card.replace('class="icon"', "")} Karte</span>` : ""}</div>
     <b>${esc(leaf(f.name))}</b><small>${subLabel(f)}</small></button>`).join("")}</div>`;
 }
-function bindTiles() { $$(".folder[data-f]").forEach((b) => b.onclick = () => go("music", b.dataset.f)); }
+function bindTiles() { $$(".folder[data-f]").forEach((b) => b.onclick = () => goFolder(b.dataset.f)); }
+const viewOfCat = (c) => c === "Musik" ? "musik" : "hoerspiele";
+const goFolder = (p) => go(viewOfCat(catOf(p)), p);
+const goCat = (c) => go(viewOfCat(c));
+const goUp = (p) => { const up = p.split("/").slice(0, -1).join("/"); CATS.includes(up) || !up ? goCat(up || catOf(p)) : goFolder(up); };
 
 const viewMusic = run(async () => {
   const d = await api("/api/library"); S.lib = d;
-  const cat = S.cat || "Hörspiele";
+  const cat = S.view === "musik" ? "Musik" : "Hörspiele";
   const list = childrenOf(d.folders, cat);
-  const loose = d.folders.filter((f) => !f.name.includes("/") && !CATS.includes(f.name));
-  main.innerHTML = `<div class="head"><div><h1>Musik</h1><span class="muted small">${size(d.disk.free)} frei</span></div>
-    <button class="btn primary" id="new">${ICON.plus} ${cat === "Musik" ? "Neuer Ordner" : "Neues Hörspiel / neue Serie"}</button></div>
-    <div class="seg" role="tablist">${CATS.map((c) => `<button role="tab" aria-selected="${c === cat}" data-c="${c}">${c}</button>`).join("")}</div>
-    ${list.length ? tiles(list) : `<div class="empty">${ICON.music}<h2>Noch nichts unter „${cat}“</h2><p>${cat === "Musik" ? "Leg einen Ordner an, zum Beispiel für einen Künstler oder ein Album." : "Leg ein Hörspiel an oder eine Serie, in der du die einzelnen Folgen sammelst."}</p></div>`}
+  const loose = cat === "Hörspiele" ? d.folders.filter((f) => !f.name.includes("/") && !CATS.includes(f.name)) : [];
+  main.innerHTML = `<div class="head"><div><h1>${cat}</h1><span class="muted small">${list.length} ${cat === "Musik" ? "Ordner" : "Hörspiele und Serien"} · ${size(d.disk.free)} frei</span></div>
+    <div class="row wrap">${list.length > 1 ? `<button class="btn" id="sort">${ICON.sort} Reihenfolge</button>` : ""}<button class="btn primary" id="new">${ICON.plus} ${cat === "Musik" ? "Neuer Ordner" : "Neues Hörspiel / neue Serie"}</button></div></div>
+    <div id="area">${list.length ? tiles(list) : `<div class="empty">${ICON.music}<h2>Noch nichts unter „${cat}“</h2><p>${cat === "Musik" ? "Leg einen Ordner an, zum Beispiel für einen Künstler oder ein Album." : "Leg ein Hörspiel an oder eine Serie, in der du die einzelnen Folgen sammelst."}</p></div>`}</div>
     ${loose.length ? `<h2 style="margin-top:30px">Ohne Kategorie</h2><p class="muted small">Diese Ordner liegen außerhalb von „Hörspiele“ und „Musik“. Öffne sie und wähle „Verschieben“.</p>${tiles(loose)}` : ""}`;
-  $$(".seg button").forEach((b) => b.onclick = () => { S.cat = b.dataset.c; viewMusic(); });
   $("#new").onclick = run(async () => {
     const n = await prompt2(cat === "Musik" ? "Neuer Ordner" : "Neues Hörspiel oder neue Serie", cat === "Musik" ? "Name, z. B. „Rolf Zuckowski“" : "Name, z. B. „Bibi Blocksberg“", "", "Anlegen");
-    if (n) { const r = await api("/api/library/folder", { name: cat + "/" + n }); go("music", r.name); }
+    if (n) { const r = await api("/api/library/folder", { name: cat + "/" + n }); goFolder(r.name); }
   });
+  if ($("#sort")) $("#sort").onclick = () => sortEditor($("#area"), cat, "folders", list.map((f) => ({ name: leaf(f.name), path: f.name, cover_v: f.cover_v, sub: subLabel(f) })), viewMusic);
   bindTiles();
 });
+
+// Reihenfolge bearbeiten: Liste mit Pfeilen, „Fertig“ speichert
+function sortEditor(el, folder, kind, items, done) {
+  let list = items.slice();
+  const paint = () => {
+    el.innerHTML = `<div class="card sorter"><p class="muted small" style="margin-top:0">${kind === "folders" ? "So werden die Ordner angezeigt und – bei einer Karte für den ganzen Ordner – nacheinander abgespielt." : "In dieser Reihenfolge werden die Titel abgespielt."}</p>
+      <ol class="list">${list.map((it, i) => `<li>${it.path ? `<div style="width:42px;flex:none">${cover(it.path, true, "&v=" + it.cover_v)}</div>` : `<span class="muted small" style="min-width:1.8em;text-align:right">${i + 1}</span>`}
+        <div class="grow"><b style="font-weight:600">${esc(it.name)}</b>${it.sub ? `<span>${esc(it.sub)}</span>` : ""}</div>
+        <button class="iconbtn" data-up="${i}" aria-label="Nach oben" ${i ? "" : "disabled"}>${ICON.up}</button>
+        <button class="iconbtn" data-dn="${i}" aria-label="Nach unten" ${i < list.length - 1 ? "" : "disabled"}>${ICON.down}</button></li>`).join("")}</ol>
+      <div class="row wrap" style="margin-top:14px"><button class="btn" id="s-az">A–Z sortieren</button><span class="grow"></span><button class="btn" id="s-x">Abbrechen</button><button class="btn primary" id="s-ok">Fertig</button></div></div>`;
+    $$("[data-up]", el).forEach((b) => b.onclick = () => { const i = +b.dataset.up; [list[i - 1], list[i]] = [list[i], list[i - 1]]; paint(); $(`[data-up="${i - 1}"]`, el)?.focus(); });
+    $$("[data-dn]", el).forEach((b) => b.onclick = () => { const i = +b.dataset.dn; [list[i + 1], list[i]] = [list[i], list[i + 1]]; paint(); $(`[data-dn="${i + 1}"]`, el)?.focus(); });
+    $("#s-az", el).onclick = () => { list.sort((a, b) => a.name.localeCompare(b.name, "de", { numeric: true })); paint(); };
+    $("#s-x", el).onclick = done;
+    $("#s-ok", el).onclick = run(async () => { await api("/api/library/order", { folder, kind, items: list.map((x) => x.name) }); toast("Reihenfolge gespeichert"); done(); });
+  };
+  paint(); el.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+// Titelbild: quadratisch zuschneiden und verkleinern, bevor es hochgeladen wird
+async function squareJpeg(file, px = 800) {
+  const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error("Das Bild konnte nicht gelesen werden")); i.src = URL.createObjectURL(file); });
+  const side = Math.min(img.naturalWidth, img.naturalHeight), c = document.createElement("canvas");
+  c.width = c.height = Math.min(px, side);
+  c.getContext("2d").drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, c.width, c.height);
+  URL.revokeObjectURL(img.src);
+  return new Promise((res) => c.toBlob(res, "image/jpeg", 0.86));
+}
 
 const viewFolder = run(async () => {
   const name = S.folder;
   let tracks, lib;
   try { [tracks, lib] = await Promise.all([api("/api/library/tracks?folder=" + encodeURIComponent(name)), api("/api/library")]); }
-  catch (e) { toast(e.message, "error"); return go("music"); }
-  const f = lib.folders.find((x) => x.name === name) || { cards: [], cover: false, total_tracks: tracks.length, subfolders: 0 };
+  catch (e) { toast(e.message, "error"); return goCat(catOf(name) || "Hörspiele"); }
+  const f = lib.folders.find((x) => x.name === name) || { cards: [], cover: false, cover_v: 0, total_tracks: tracks.length, subfolders: 0 };
   const subs = childrenOf(lib.folders, name);
   const cat = catOf(name), music = cat === "Musik";
   const total = tracks.reduce((a, t) => a + t.size, 0);
@@ -226,7 +262,8 @@ const viewFolder = run(async () => {
   const subWord = music ? "Unterordner" : "Folgen";
   const meta = [subs.length ? `${subs.length} ${music ? "Unterordner" : subs.length === 1 ? "Folge" : "Folgen"}` : "", `${f.total_tracks} Titel`, tracks.length ? size(total) : ""].filter(Boolean).join(" · ");
   main.innerHTML = `<nav class="crumbs">${ICON.back}${crumbs}</nav>
-    <div class="detail-head"><div id="cv" title="Bild ändern">${cover(name, true, "&v=" + Date.now())}</div>
+    <div class="detail-head"><div>${cover(name, true, "&v=" + f.cover_v)}
+        <div class="row cvrow"><button class="btn small" id="cv">${ICON.camera} Titelbild</button>${f.custom_cover ? `<button class="iconbtn" id="cvdel" aria-label="Titelbild entfernen" title="Titelbild entfernen" style="width:36px;height:36px">${ICON.trash}</button>` : ""}</div></div>
       <div><h1 style="overflow-wrap:anywhere">${esc(leaf(name))}</h1><p class="muted">${meta} ${f.cards.length ? `<span class="pill accent">${f.cards.length === 1 ? "Karte zugewiesen" : f.cards.length + " Karten"}</span>` : ""}</p>
       <div class="row wrap"><button class="btn primary" id="play" ${f.total_tracks ? "" : "disabled"}>${ICON.play.replace("<svg", '<svg class="icon" style="fill:currentColor;stroke:none"')} ${subs.length ? "Alles abspielen" : "Abspielen"}</button>
       <button class="btn" id="assign">${ICON.card} Karte zuweisen</button>
@@ -234,19 +271,19 @@ const viewFolder = run(async () => {
       <button class="iconbtn" id="ren" aria-label="Umbenennen" title="Umbenennen">${ICON.edit}</button>
       <button class="iconbtn" id="mv" aria-label="Verschieben" title="Verschieben">${ICON.move}</button>
       <button class="iconbtn" id="del" aria-label="Ordner löschen" title="Ordner löschen">${ICON.trash}</button></div></div></div>
-    ${subs.length ? `<h2>${subWord}</h2>${tiles(subs)}<div style="height:26px"></div>` : ""}
-    ${subs.length && !tracks.length ? `<p class="muted small">Titel lädst du in die einzelnen ${subWord} hoch. Eine Karte für „${esc(leaf(name))}“ spielt alle ${subWord} nacheinander.</p>` : `
+    ${subs.length ? `<div class="row" style="justify-content:space-between;margin-bottom:10px"><h2 style="margin:0">${subWord}</h2>${subs.length > 1 ? `<button class="btn small" id="sortf">${ICON.sort} Reihenfolge</button>` : ""}</div><div id="subarea">${tiles(subs)}</div><div style="height:26px"></div>` : ""}
+    ${subs.length && !tracks.length ? `<p class="muted small">Titel lädst du in die einzelnen ${subWord} hoch. Eine Karte für „${esc(leaf(name))}“ spielt alle ${subWord} nacheinander, in der Reihenfolge oben.</p>` : `
     <div class="drop" id="drop" tabindex="0" role="button"><b>Titel hinzufügen</b><br><span class="small">Dateien hierher ziehen oder tippen (MP3, M4A, OGG, FLAC, WAV)</span><div id="up"></div></div>
-    <div class="card">${tracks.length ? `<ul class="list">${tracks.map((t, i) => `<li><span class="muted small" style="min-width:1.8em;text-align:right">${i + 1}</span><div class="grow"><b style="font-weight:600">${esc(t.file)}</b></div><span class="muted small">${size(t.size)}</span><button class="iconbtn" data-del="${i}" aria-label="Titel löschen">${ICON.trash}</button></li>`).join("")}</ul>` : `<p class="muted" style="margin:0">Dieser Ordner ist noch leer.${music ? "" : " Für eine Serie lege mit + Folgen an; für ein einzelnes Hörspiel lade die Titel direkt hier hoch."}</p>`}</div>`}
+    <div id="trackarea"><div class="card">${tracks.length ? `${tracks.length > 1 ? `<div class="row" style="justify-content:flex-end;margin:-6px 0 4px"><button class="btn small" id="sortt">${ICON.sort} Reihenfolge</button></div>` : ""}<ul class="list">${tracks.map((t, i) => `<li><span class="muted small" style="min-width:1.8em;text-align:right">${i + 1}</span><div class="grow"><b style="font-weight:600">${esc(t.file)}</b></div><span class="muted small">${size(t.size)}</span><button class="iconbtn" data-del="${i}" aria-label="Titel löschen">${ICON.trash}</button></li>`).join("")}</ul>` : `<p class="muted" style="margin:0">Dieser Ordner ist noch leer.${music ? "" : " Für eine Serie lege mit + Folgen an; für ein einzelnes Hörspiel lade die Titel direkt hier hoch."}</p>`}</div></div>`}
     <input type="file" id="files" multiple accept="audio/*,.mp3,.m4a,.m4b,.ogg,.opus,.flac,.wav,.aac,image/*" hidden>
-    <input type="file" id="cvfile" accept="image/jpeg,image/png,image/webp" hidden>`;
-  $$(".crumbs .crumb").forEach((b) => b.onclick = () => { const p = b.dataset.p; if (CATS.includes(p)) { S.cat = p; go("music"); } else go("music", p); });
-  $(".crumbs svg").onclick = () => { const up = parts.slice(0, -1).join("/"); if (CATS.includes(up)) { S.cat = up; go("music"); } else go("music", up); };
+    <input type="file" id="cvfile" accept="image/*" hidden>`;
+  $$(".crumbs .crumb").forEach((b) => b.onclick = () => { const p = b.dataset.p; CATS.includes(p) ? goCat(p) : goFolder(p); });
+  $(".crumbs svg").onclick = () => goUp(name);
   bindTiles();
   $("#play").onclick = () => { act("play_folder", name); go("now"); };
   $("#assign").onclick = () => learnCard({ type: "folder", target: name });
-  $("#sub").onclick = run(async () => { const n = await prompt2(music ? "Neuer Unterordner" : "Neue Folge", music ? "Name, z. B. ein Albumtitel" : "Name, z. B. „Folge 12 – Hexen gibt es doch“", "", "Anlegen"); if (n) { const r = await api("/api/library/folder", { name: name + "/" + n }); go("music", r.name); } });
-  $("#ren").onclick = run(async () => { const n = await prompt2("Umbenennen", "Neuer Name", leaf(name)); if (n && n !== leaf(name)) { const r = await api("/api/library/rename", { folder: name, name: n }); go("music", r.name); } });
+  $("#sub").onclick = run(async () => { const n = await prompt2(music ? "Neuer Unterordner" : "Neue Folge", music ? "Name, z. B. ein Albumtitel" : "Name, z. B. „Folge 12 – Hexen gibt es doch“", "", "Anlegen"); if (n) { const r = await api("/api/library/folder", { name: name + "/" + n }); goFolder(r.name); } });
+  $("#ren").onclick = run(async () => { const n = await prompt2("Umbenennen", "Neuer Name", leaf(name)); if (n && n !== leaf(name)) { const r = await api("/api/library/rename", { folder: name, name: n }); goFolder(r.name); } });
   $("#mv").onclick = run(async () => {
     const targets = [...CATS, ...lib.folders.map((x) => x.name)].filter((t) => t !== name && !t.startsWith(name + "/") && t !== parts.slice(0, -1).join("/"));
     openDialog(`<h2>Verschieben</h2><p class="muted">„${esc(leaf(name))}“ verschieben nach …</p>
@@ -254,10 +291,12 @@ const viewFolder = run(async () => {
       <p class="muted small">So machst du aus einzelnen Hörspielen eine Serie: Serie anlegen, dann die Folgen hineinschieben. Zugewiesene Karten bleiben gültig.</p>
       <div class="actions"><button class="btn" id="mvc">Abbrechen</button><button class="btn primary" id="mvo">Verschieben</button></div>`);
     $("#mvc", dialog).onclick = closeDialog;
-    $("#mvo", dialog).onclick = run(async () => { const r = await api("/api/library/move", { folder: name, parent: $("#mvt", dialog).value }); closeDialog(); toast("Verschoben"); go("music", r.name); });
+    $("#mvo", dialog).onclick = run(async () => { const r = await api("/api/library/move", { folder: name, parent: $("#mvt", dialog).value }); closeDialog(); toast("Verschoben"); goFolder(r.name); });
   });
-  $("#del").onclick = run(async () => { if (await ask("Ordner löschen?", `„${leaf(name)}“ mit ${f.total_tracks} Titeln${subs.length ? ` und ${subs.length} ${subWord}` : ""} wird endgültig gelöscht. Zugewiesene Karten werden frei.`, "Löschen", true)) { await api("/api/library/delete", { folder: name }); toast("Ordner gelöscht"); const up = parts.slice(0, -1).join("/"); if (CATS.includes(up)) { S.cat = up; go("music"); } else go("music", up); } });
+  $("#del").onclick = run(async () => { if (await ask("Ordner löschen?", `„${leaf(name)}“ mit ${f.total_tracks} Titeln${subs.length ? ` und ${subs.length} ${subWord}` : ""} wird endgültig gelöscht. Zugewiesene Karten werden frei.`, "Löschen", true)) { await api("/api/library/delete", { folder: name }); toast("Ordner gelöscht"); goUp(name); } });
   $$("[data-del]").forEach((b) => b.onclick = run(async () => { const t = tracks[b.dataset.del]; if (await ask("Titel löschen?", t.file, "Löschen", true)) { await api("/api/library/delete", { folder: name, file: t.file }); viewFolder(); } }));
+  if ($("#sortf")) $("#sortf").onclick = () => sortEditor($("#subarea"), name, "folders", subs.map((x) => ({ name: leaf(x.name), path: x.name, cover_v: x.cover_v, sub: subLabel(x) })), viewFolder);
+  if ($("#sortt")) $("#sortt").onclick = () => sortEditor($("#trackarea"), name, "tracks", tracks.map((t) => ({ name: t.file })), viewFolder);
   const drop = $("#drop"), files = $("#files");
   if (drop) {
     drop.onclick = () => files.click(); drop.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") files.click(); };
@@ -267,7 +306,15 @@ const viewFolder = run(async () => {
   }
   files.onchange = () => upload(name, [...files.files]);
   $("#cv").onclick = () => $("#cvfile").click();
-  $("#cvfile").onchange = run(async (e) => { const fd = new FormData(); fd.append("file", e.target.files[0]); const r = await fetch("/api/cover?folder=" + encodeURIComponent(name), { method: "POST", body: fd }); if (!r.ok) throw new Error((await r.json()).error); viewFolder(); });
+  $("#cvfile").onchange = run(async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    const blob = await squareJpeg(file);
+    const fd = new FormData(); fd.append("file", blob, "cover.jpg");
+    const r = await fetch("/api/cover?folder=" + encodeURIComponent(name), { method: "POST", body: fd });
+    if (!r.ok) throw new Error((await r.json()).error);
+    toast("Titelbild gespeichert"); viewFolder();
+  });
+  if ($("#cvdel")) $("#cvdel").onclick = run(async () => { if (await ask("Titelbild entfernen?", "Danach wird – falls vorhanden – das Bild aus den Musikdateien angezeigt.", "Entfernen", true)) { await api("/api/cover?folder=" + encodeURIComponent(name), {}, "DELETE"); viewFolder(); } });
 });
 
 function xhrUpload(url, file, onProgress) {
@@ -290,7 +337,7 @@ async function upload(folder, list) {
   }
   S.uploading = false;
   errors.length ? toast(errors[0] + (errors.length > 1 ? ` (+${errors.length - 1} weitere)` : ""), "error") : toast(list.length === 1 ? "Datei hochgeladen" : list.length + " Dateien hochgeladen");
-  if (S.view === "music" && S.folder === folder) viewFolder();
+  if (S.folder === folder) viewFolder();
 }
 
 // ---------- Karten ----------
@@ -517,7 +564,7 @@ function paintBackup() {
 (async function start() {
   try { S.cfg = (await api("/api/config")).config; } catch {}
   const [v, f] = location.hash.slice(1).split("/");
-  S.view = ["now", "music", "cards", "settings"].includes(v) ? v : "now"; S.folder = f ? decodeURIComponent(f) : null;
+  S.view = ["now", "hoerspiele", "musik", "cards", "settings"].includes(v) ? v : "now"; S.folder = f ? decodeURIComponent(f) : null;
   $$("#nav button").forEach((b) => b.classList.toggle("active", b.dataset.view === S.view));
   render(); connect();
 })();
