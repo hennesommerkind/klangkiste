@@ -170,7 +170,7 @@ class Network:
         if len(pw) < 8:
             raise NetworkError("Das Kennwort für das eigene WLAN braucht mindestens 8 Zeichen")
         await self._nm("connection", "delete", "id", HOTSPOT, check=False)
-        await self._nm("connection", "add", "type", "wifi", "ifname", "wlan0", "con-name", HOTSPOT,
+        await self._nm("connection", "add", "save", "no", "type", "wifi", "ifname", "wlan0", "con-name", HOTSPOT,
                        "autoconnect", "no", "ssid", c["hotspot_ssid"] or "Klangkiste",
                        "802-11-wireless.mode", "ap", "802-11-wireless.band", "bg", "802-11-wireless.channel", "6",
                        "ipv4.method", "shared", "ipv6.method", "disabled",
