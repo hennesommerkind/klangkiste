@@ -78,7 +78,7 @@ class Buttons:
             a = InputDevice(clk, pull_up=True)
             b = InputDevice(dt, pull_up=True)
             self._devices += [a, b]
-            self._enc = {"a": a.pin.state, "b": b.pin.state, "acc": 0, "seq": [], "sign": sign, "logged": 0}
+            self._enc = {"a": int(bool(a.pin.state)), "b": int(bool(b.pin.state)), "seq": [], "sign": sign, "logged": 0}
             # Die Pins merken sich Rückrufe nur schwach – eigene Verweise halten sie am Leben.
             self._enc_cbs = [lambda ticks, state: self._edge("a", state),
                              lambda ticks, state: self._edge("b", state)]
@@ -94,11 +94,10 @@ class Buttons:
             self.errors["encoder"] = str(e)
             log.warning("Drehregler: %s", e)
 
-    # Übergänge (alt_a, alt_b, neu_a, neu_b) → Viertelschritt. Ruhelage an jeder Raste: beide 1.
-    _QUARTER = {(1, 1, 0, 1): 1, (0, 1, 0, 0): 1, (0, 0, 1, 0): 1, (1, 0, 1, 1): 1,
-                (1, 1, 1, 0): -1, (1, 0, 0, 0): -1, (0, 0, 0, 1): -1, (0, 1, 1, 1): -1}
-
     def _edge(self, key, state):
+        """Ruhelage an jeder Raste: beide Leitungen 1. Die Richtung ergibt sich daraus, welche
+        Leitung zuerst auf 0 fällt; gezählt wird nur, wenn dazwischen beide auf 0 waren (sonst
+        war es Prellen). Die Reihenfolge beim Zurückkehren ist bei günstigen Reglern unzuverlässig."""
         with self._enc_lock:
             e = self._enc
             old = (e["a"], e["b"])
@@ -106,16 +105,16 @@ class Buttons:
             new = (e["a"], e["b"])
             if new == old:
                 return
-            e["acc"] += self._QUARTER.get(old + new, 0)
             e["seq"].append(f"{new[0]}{new[1]}")
             if new != (1, 1):
                 return
-            acc, seq = e["acc"], e["seq"]
-            e["acc"], e["seq"] = 0, []
-            step = 1 if acc >= 2 else -1 if acc <= -2 else 0   # eine verpasste Flanke verzeihen
+            seq, e["seq"] = e["seq"], []
+            step = 0
+            if "00" in seq:
+                step = 1 if seq[0] == "01" else -1 if seq[0] == "10" else 0
             if e["logged"] < 60:   # die ersten Rasten mitschreiben – hilft bei der Fehlersuche
                 e["logged"] += 1
-                log.info("Drehregler: 11>%s = %+d Viertel → %s", ">".join(seq), acc,
+                log.info("Drehregler: 11>%s → %s", ">".join(seq),
                          "nichts" if not step else "lauter" if step * e["sign"] > 0 else "leiser")
         if step:
             self._turn(step * e["sign"])
