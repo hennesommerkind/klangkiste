@@ -6,9 +6,11 @@ Wants=network-online.target
 [Service]
 User=klangkiste
 Group=klangkiste
-ExecStart=/usr/local/bin/go-librespot -config_dir /var/lib/klangkiste/spotify
+ExecStart=/usr/local/bin/go-librespot --config_dir /var/lib/klangkiste/spotify
 Restart=always
 RestartSec=5
+RestartSteps=6
+RestartMaxDelaySec=300
 
 [Install]
 WantedBy=multi-user.target
