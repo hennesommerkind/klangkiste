@@ -18,6 +18,7 @@ if cmd == "scan":
         if d["on"]:
             print(f"\x1b[0;92m[NEW]\x1b[0m Device {m} {d['name']}" if not d["found"] else f"[CHG] Device {m} RSSI: -60")
             d["found"] = True
+    save(); sys.stdout.flush()
     print(f"[NEW] Device 66:77:88:99:AA:BB 66-77-88-99-AA-BB")
 elif cmd == "devices":
     for m, d in D.items():
