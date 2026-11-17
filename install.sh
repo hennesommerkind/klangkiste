@@ -81,8 +81,11 @@ if [ "$MPD_CHANGED" = 1 ] || ! systemctl is-active -q mpd.service; then systemct
 
 say "Protokolle begrenzen"
 install -d /etc/systemd/journald.conf.d
-printf '[Journal]\nSystemMaxUse=50M\nRuntimeMaxUse=20M\n' > /etc/systemd/journald.conf.d/klangkiste.conf
-systemctl restart systemd-journald
+JCONF=$(printf '[Journal]\nSystemMaxUse=50M\nRuntimeMaxUse=20M\n')
+if [ "$(cat /etc/systemd/journald.conf.d/klangkiste.conf 2>/dev/null)" != "$JCONF" ]; then
+    echo "$JCONF" > /etc/systemd/journald.conf.d/klangkiste.conf
+    systemctl restart systemd-journald
+fi
 
 if [ "$SPOTIFY" = 1 ]; then
     say "Spotify Connect (go-librespot) einrichten"
