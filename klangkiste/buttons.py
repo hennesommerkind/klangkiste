@@ -17,6 +17,8 @@ class Buttons:
         self._turns = 0
         self._turn_lock = threading.Lock()
         self._turn_timer = None
+        self._enc = None
+        self._enc_lock = threading.Lock()
 
     def _close(self):
         for d in self._devices:
@@ -63,18 +65,26 @@ class Buttons:
         enc = self.store.config.get("encoder") or {}
         if not enc.get("enabled"):
             return
-        from gpiozero import Button, RotaryEncoder
+        from gpiozero import Button, InputDevice
 
         clk, dt, sw = int(enc["clk"]), int(enc["dt"]), int(enc["sw"])
         if {clk, dt, sw} & used:
             self.errors["encoder"] = "Ein Anschluss des Drehreglers ist schon mit einem Knopf belegt"
             return
         try:
-            rot = RotaryEncoder(clk, dt, max_steps=0)
+            # Eigene Auswertung statt gpiozero.RotaryEncoder: Der verlangt alle vier Flanken in
+            # exakter Reihenfolge und liegt bei prellenden Kontakten oder verpassten Flanken daneben.
             sign = -1 if enc.get("reverse") else 1
-            rot.when_rotated_clockwise = lambda: self._turn(sign)
-            rot.when_rotated_counter_clockwise = lambda: self._turn(-sign)
-            self._devices.append(rot)
+            a = InputDevice(clk, pull_up=True)
+            b = InputDevice(dt, pull_up=True)
+            self._devices += [a, b]
+            self._enc = {"a": a.pin.state, "b": b.pin.state, "acc": 0, "seq": [], "sign": sign, "logged": 0}
+            # Die Pins merken sich Rückrufe nur schwach – eigene Verweise halten sie am Leben.
+            self._enc_cbs = [lambda ticks, state: self._edge("a", state),
+                             lambda ticks, state: self._edge("b", state)]
+            for dev, cb in zip((a, b), self._enc_cbs):
+                dev.pin.edges = "both"
+                dev.pin.when_changed = cb
             press = enc.get("press")
             if press in BUTTON_ACTIONS:
                 btn = Button(sw, pull_up=True, bounce_time=0.05)
@@ -83,6 +93,32 @@ class Buttons:
         except Exception as e:
             self.errors["encoder"] = str(e)
             log.warning("Drehregler: %s", e)
+
+    # Übergänge (alt_a, alt_b, neu_a, neu_b) → Viertelschritt. Ruhelage an jeder Raste: beide 1.
+    _QUARTER = {(1, 1, 0, 1): 1, (0, 1, 0, 0): 1, (0, 0, 1, 0): 1, (1, 0, 1, 1): 1,
+                (1, 1, 1, 0): -1, (1, 0, 0, 0): -1, (0, 0, 0, 1): -1, (0, 1, 1, 1): -1}
+
+    def _edge(self, key, state):
+        with self._enc_lock:
+            e = self._enc
+            old = (e["a"], e["b"])
+            e[key] = 1 if state else 0
+            new = (e["a"], e["b"])
+            if new == old:
+                return
+            e["acc"] += self._QUARTER.get(old + new, 0)
+            e["seq"].append(f"{new[0]}{new[1]}")
+            if new != (1, 1):
+                return
+            acc, seq = e["acc"], e["seq"]
+            e["acc"], e["seq"] = 0, []
+            step = 1 if acc >= 2 else -1 if acc <= -2 else 0   # eine verpasste Flanke verzeihen
+            if e["logged"] < 60:   # die ersten Rasten mitschreiben – hilft bei der Fehlersuche
+                e["logged"] += 1
+                log.info("Drehregler: 11>%s = %+d Viertel → %s", ">".join(seq), acc,
+                         "nichts" if not step else "lauter" if step * e["sign"] > 0 else "leiser")
+        if step:
+            self._turn(step * e["sign"])
 
     def _turn(self, direction):
         # Schnelles Drehen bündeln: ein Befehl alle 60 ms statt einer pro Raste
