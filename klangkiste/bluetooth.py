@@ -65,23 +65,33 @@ class Bluetooth:
             raise BluetoothError("Keine Verbindung zum Bluetooth-Dienst (Berechtigung) – Box einmal neu starten")
         return proc.returncode, text
 
-    async def _objects(self):
-        """Alle bekannten Geräte in einem Aufruf (D-Bus ObjectManager)."""
+    async def _objects(self, only=None):
+        """Alle bekannten Geräte in einem Aufruf (D-Bus ObjectManager).
+        Mit only=MAC nur die Eigenschaften dieses einen Geräts (viel kleiner)."""
+        if only:
+            path = "/org/bluez/hci0/dev_" + only.replace(":", "_")
+            cmd = ["busctl", "--system", "--json=short", "call", "org.bluez", path,
+                   "org.freedesktop.DBus.Properties", "GetAll", "s", "org.bluez.Device1"]
+        else:
+            cmd = ["busctl", "--system", "--json=short", "call", "org.bluez", "/",
+                   "org.freedesktop.DBus.ObjectManager", "GetManagedObjects"]
         proc = await asyncio.create_subprocess_exec(
-            "busctl", "--system", "--json=short", "call", "org.bluez", "/",
-            "org.freedesktop.DBus.ObjectManager", "GetManagedObjects",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         try:
             out, err = await asyncio.wait_for(proc.communicate(), 8)
         except asyncio.TimeoutError:
             proc.kill()
             raise BluetoothError("Bluetooth antwortet nicht")
-        if proc.returncode != 0:
+        if proc.returncode != 0 and not (only and "UnknownObject" in err.decode("utf-8", "replace")):
             msg = err.decode("utf-8", "replace").strip()
             if "Access denied" in msg or "not allowed" in msg:
                 msg = "keine Berechtigung (Box einmal neu starten)"
             raise BluetoothError(f"Bluetooth-Dienst nicht erreichbar: {msg[-160:]}")
+        if only and proc.returncode != 0:
+            return {}  # Gerät (noch) nicht bekannt
         data = json.loads(out)["data"][0]
+        if only:
+            data = {"x": {"org.bluez.Device1": data}}
         devs = {}
         for ifaces in data.values():
             raw = ifaces.get("org.bluez.Device1")
@@ -102,7 +112,7 @@ class Bluetooth:
         return devs
 
     async def info(self, mac):
-        d = (await self._objects()).get(mac)
+        d = (await self._objects(mac)).get(mac)
         if not d:
             raise BluetoothError("Gerät nicht gefunden")
         return d
@@ -241,6 +251,8 @@ class Bluetooth:
     async def _check(self):
         mac = self.cfg.get("device")
         connected, name = False, ""
+        if not mac and not self.connected:
+            return  # kein Kopfhörer gemerkt: nichts abzufragen
         if mac:
             try:
                 d = await self.info(mac)

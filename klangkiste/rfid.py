@@ -83,6 +83,7 @@ class MFRC522:
             n = self._r(COM_IRQ)
             if n & 0x31:
                 break
+            time.sleep(0.002)  # nicht im Dauerlauf fragen – das bremst den Rest der Box aus
         self._clear(BIT_FRAMING, 0x80)
         if not (n & 0x30) or (n & 0x01) or (self._r(ERROR) & 0x1B):
             return None, 0
