@@ -32,7 +32,8 @@ log = logging.getLogger("klangkiste")
 # Nicht auf die Systemtabelle verlassen: falsche Typen lassen Browser
 # Stildatei oder Skript stillschweigend verwerfen.
 for _ext, _type in ((".css", "text/css"), (".js", "text/javascript"), (".svg", "image/svg+xml"),
-                    (".html", "text/html"), (".webp", "image/webp")):
+                    (".html", "text/html"), (".webp", "image/webp"), (".png", "image/png"),
+                    (".webmanifest", "application/manifest+json")):
     mimetypes.add_type(_type, _ext)
 WEB = Path(__file__).resolve().parent.parent / "web"
 
@@ -111,7 +112,8 @@ class Box:
             if self.player.state.get("state") != "offline":
                 await asyncio.to_thread(self.player.set_headphones, self.bluetooth.connected)
                 await asyncio.to_thread(self.player.set_volume, self.store.config["audio"]["volume_start"])
-                if self.store.config["audio"]["start_sound"] and not self.mock:
+                if system.booted_recently() and not self.mock:
+                    # Ton nur beim Systemstart, nicht nach Updates oder Neustart des Dienstes
                     await asyncio.to_thread(sounds.chime, self.store.config["audio"]["volume_start"])
                 return
             await asyncio.sleep(1)
@@ -208,14 +210,19 @@ class Box:
 
     def _on_network(self, kind, info):
         """Läuft im Ereignis-Thread."""
-        if kind == "connected" and self.store.config["audio"]["announce_ip"]:
-            self.loop.run_in_executor(None, self.announce, False)
+        if kind == "connected_from_hotspot":
+            # Nur nach dem Wechsel aus dem Not-WLAN ansagen – sonst nur auf Knopfdruck
+            self.loop.run_in_executor(None, self._announce_later)
         elif kind == "hotspot":
             ssid = self.store.config["wifi"]["hotspot_ssid"]
             self.loop.run_in_executor(None, self._say_paused,
                                       f"Kein bekanntes WLAN gefunden. Verbinde dich mit dem WLAN {ssid} "
                                       f"und öffne im Browser {sounds.speakable_ip(HOTSPOT_IP)}.")
         self._emit("network", {"kind": kind, "info": info})
+
+    def _announce_later(self):
+        time.sleep(8)  # Adresse vom Router abwarten
+        self.announce(False)
 
     def _say_paused(self, text):
         """Ansage sprechen; laufende Wiedergabe dafür kurz anhalten."""
@@ -511,6 +518,13 @@ async def api_library(request):
     return ok({"folders": folders, "disk": b.library.disk()})
 
 
+@routes.get("/api/library/search")
+async def api_search(request):
+    q = request.query.get("q", "")[:80]
+    cat = request.query.get("cat") or None
+    return ok(await asyncio.to_thread(box(request).library.search_tracks, q, cat))
+
+
 @routes.get("/api/library/tracks")
 async def api_tracks(request):
     return ok(await asyncio.to_thread(box(request).library.tracks, request.query["folder"]))
@@ -754,7 +768,7 @@ def _clean_patch(b, d):
         for k in ("volume_start", "volume_max", "volume_step"):
             if k in a:
                 out[k] = max(1, min(100, int(a[k])))
-        for k in ("resume", "pause_on_remove", "start_sound", "announce_ip"):
+        for k in ("resume", "pause_on_remove"):
             if k in a:
                 out[k] = bool(a[k])
         patch["audio"] = out
@@ -1031,6 +1045,25 @@ async def api_debug_card(request):
     return ok()
 
 
+async def manifest(request):
+    name = box(request).store.config["name"] or "Klangkiste"
+    return web.json_response({
+        "name": name, "short_name": name[:12], "lang": "de", "start_url": "/", "scope": "/",
+        "display": "standalone", "background_color": "#fbf6ee", "theme_color": "#f2643d",
+        "description": "Musik und Hörspiele auf der Klangkiste verwalten",
+        "icons": [
+            {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png"},
+            {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png"},
+            {"src": "/static/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+            {"src": "/static/icon.svg", "sizes": "any", "type": "image/svg+xml"},
+        ],
+    }, content_type="application/manifest+json", headers={"Cache-Control": "no-cache"})
+
+
+async def service_worker(request):
+    return web.FileResponse(WEB / "sw.js", headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
+
+
 async def index(request):
     return web.FileResponse(WEB / "index.html", headers={"Cache-Control": "no-cache"})
 
@@ -1049,6 +1082,8 @@ def make_app(args):
     app["box"] = b
     app.add_routes(routes)
     app.router.add_get("/", index)
+    app.router.add_get("/manifest.webmanifest", manifest)
+    app.router.add_get("/sw.js", service_worker)
     app.router.add_static("/static/", WEB)
     app.on_startup.append(b.start)
     app.on_cleanup.append(b.stop)
@@ -1058,7 +1093,7 @@ def make_app(args):
 def main():
     ap = argparse.ArgumentParser(description="Klangkiste")
     ap.add_argument("--data", default="/var/lib/klangkiste")
-    ap.add_argument("--host", default="0.0.0.0")
+    ap.add_argument("--host", default=None, help="Standard: alle Adressen, IPv4 und IPv6")
     ap.add_argument("--port", type=int, default=80)
     ap.add_argument("--mpd-host", default="127.0.0.1")
     ap.add_argument("--mpd-port", type=int, default=6600)

@@ -3,6 +3,7 @@ import json
 import os
 import re
 import shutil
+import unicodedata
 from pathlib import Path
 
 AUDIO = {".mp3", ".m4a", ".m4b", ".aac", ".ogg", ".oga", ".opus", ".flac", ".wav", ".wma"}
@@ -22,6 +23,12 @@ def clean_name(name):
     if not name or "/" in name or "\\" in name or name in (".", ".."):
         raise LibraryError("Ungültiger Name")
     return name[:150]
+
+
+def norm(text):
+    """Für die Suche: klein, ohne Akzente/Umlautpunkte, ß→ss („Grüffelo“ ≙ „gruffelo“)."""
+    t = unicodedata.normalize("NFKD", str(text).casefold().replace("ß", "ss"))
+    return "".join(c for c in t if not unicodedata.combining(c))
 
 
 def _natural(s):
@@ -277,6 +284,30 @@ class Library:
             if f.is_file() and f.stem.lower() == "cover" and f.suffix.lower() in IMAGES:
                 f.unlink()
         (d / f"cover{suffix}").write_bytes(data)
+
+    def search_tracks(self, query, category=None, limit=60):
+        """Titel, deren Name alle Suchwörter enthält (Ordnerpfad zählt mit)."""
+        terms = norm(query).split()
+        if not terms:
+            return []
+        base = self.path(category) if category else self.root
+        out = []
+        for dirpath, dirnames, filenames in os.walk(base):
+            dirnames[:] = [x for x in dirnames if not x.startswith(".")]
+            d = Path(dirpath)
+            rel = self.rel(d) if d != self.root else ""
+            nrel = norm(rel)
+            for f in filenames:
+                if Path(f).suffix.lower() not in AUDIO:
+                    continue
+                nf = norm(Path(f).stem)
+                hay = nrel + " " + nf
+                if all(t in hay for t in terms) and any(t in nf for t in terms):
+                    out.append({"file": f, "folder": rel})
+                    if len(out) >= limit:
+                        return out
+        out.sort(key=lambda x: (_natural(x["folder"]), _natural(x["file"])))
+        return out
 
     def remove_cover(self, folder):
         d = self.path(folder)

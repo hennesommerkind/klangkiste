@@ -24,6 +24,13 @@ def _run(*cmd, timeout=10):
         return ""
 
 
+def booted_recently(seconds=240):
+    try:
+        return float(Path("/proc/uptime").read_text().split()[0]) < seconds
+    except (OSError, ValueError, IndexError):
+        return False
+
+
 def ip_address():
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

@@ -213,6 +213,8 @@ const viewMusic = run(async () => {
   const loose = cat === "Hörspiele" ? d.folders.filter((f) => !f.name.includes("/") && !CATS.includes(f.name)) : [];
   main.innerHTML = `<div class="head"><div><h1>${cat}</h1><span class="muted small">${list.length} ${cat === "Musik" ? "Ordner" : "Hörspiele und Serien"} · ${size(d.disk.free)} frei</span></div>
     <div class="row wrap">${list.length > 1 ? `<button class="btn" id="sort">${ICON.sort} Reihenfolge</button>` : ""}<button class="btn primary" id="new">${ICON.plus} ${cat === "Musik" ? "Neuer Ordner" : "Neues Hörspiel / neue Serie"}</button></div></div>
+    ${list.length ? `<div class="search"><input type="search" id="q" placeholder="${cat} durchsuchen …" value="${esc((S.q || {})[cat] || "")}" autocomplete="off" aria-label="Suchen"></div>` : ""}
+    <div id="results" hidden></div>
     <div id="area">${list.length ? tiles(list) : `<div class="empty">${ICON.music}<h2>Noch nichts unter „${cat}“</h2><p>${cat === "Musik" ? "Leg einen Ordner an, zum Beispiel für einen Künstler oder ein Album." : "Leg ein Hörspiel an oder eine Serie, in der du die einzelnen Folgen sammelst."}</p></div>`}</div>
     ${loose.length ? `<h2 style="margin-top:30px">Ohne Kategorie</h2><p class="muted small">Diese Ordner liegen außerhalb von „Hörspiele“ und „Musik“. Öffne sie und wähle „Verschieben“.</p>${tiles(loose)}` : ""}`;
   $("#new").onclick = run(async () => {
@@ -221,7 +223,35 @@ const viewMusic = run(async () => {
   });
   if ($("#sort")) $("#sort").onclick = () => sortEditor($("#area"), cat, "folders", list.map((f) => ({ name: leaf(f.name), path: f.name, cover_v: f.cover_v, sub: subLabel(f) })), viewMusic);
   bindTiles();
+  const q = $("#q");
+  if (q) { q.oninput = () => searchLib(d.folders, cat, q.value); if (q.value) searchLib(d.folders, cat, q.value); }
 });
+
+// Suche: Ordner sofort im Browser, Titel auf der Box
+const norm = (t) => String(t).toLowerCase().replace(/ß/g, "ss").normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
+let searchSeq = 0;
+function searchLib(folders, cat, text) {
+  (S.q ||= {})[cat] = text;
+  const res = $("#results"), area = $("#area"), terms = norm(text).trim().split(/\s+/).filter(Boolean);
+  const sortBtn = $("#sort");
+  if (!terms.length) { res.hidden = true; area.hidden = false; if (sortBtn) sortBtn.hidden = false; return; }
+  res.hidden = false; area.hidden = true; if (sortBtn) sortBtn.hidden = true;
+  const hits = folders.filter((f) => catOf(f.name) === cat && terms.every((t) => norm(f.name.slice(cat.length + 1)).includes(t)));
+  const label = (f) => { const sub = f.name.slice(cat.length + 1).split("/").slice(0, -1).join(" › "); return sub || subLabel(f); };
+  res.innerHTML = `${hits.length ? `<h2>Ordner</h2><div class="folders">${hits.slice(0, 40).map((f) => `<button class="folder" data-f="${esc(f.name)}"><div style="position:relative">${cover(f.name, f.cover, "&v=" + f.cover_v)}</div><b>${esc(leaf(f.name))}</b><small>${esc(label(f))}</small></button>`).join("")}</div>` : ""}
+    <div id="trackhits"><p class="muted small" style="margin-top:18px">Suche Titel …</p></div>`;
+  bindTiles();
+  const seq = ++searchSeq;
+  clearTimeout(S.searchT);
+  S.searchT = setTimeout(run(async () => {
+    const tracks = await api(`/api/library/search?cat=${encodeURIComponent(cat)}&q=${encodeURIComponent(text)}`);
+    if (seq !== searchSeq || !$("#trackhits")) return;
+    $("#trackhits").innerHTML = tracks.length
+      ? `<h2 style="margin-top:22px">Titel</h2><div class="card"><ul class="list">${tracks.map((t, i) => `<li data-tf="${i}" style="cursor:pointer"><div style="width:40px;flex:none">${cover(t.folder, true)}</div><div class="grow"><b style="font-weight:600">${esc(t.file.replace(/\.[^.]+$/, ""))}</b><span>${esc(pretty(t.folder.slice(cat.length + 1)))}</span></div></li>`).join("")}</ul></div>`
+      : (hits.length ? "" : `<div class="empty" style="padding:30px">${ICON.music}<p>Nichts gefunden für „${esc(text)}“.</p></div>`);
+    $$("[data-tf]").forEach((li) => li.onclick = () => goFolder(tracks[li.dataset.tf].folder));
+  }), 250);
+}
 
 // Reihenfolge bearbeiten: Liste mit Pfeilen, „Fertig“ speichert
 function sortEditor(el, folder, kind, items, done) {
@@ -394,12 +424,14 @@ const viewCards = run(async () => {
   main.innerHTML = `<div class="head"><div><h1>Karten</h1><div class="status-line" style="margin:4px 0 0"><span class="pill ${d.reader_ok ? "ok" : "bad"}">${d.reader_ok ? "Kartenleser bereit" : "Kartenleser nicht bereit"}</span><span class="muted small">${d.cards.length} Karten</span></div></div>
     <button class="btn primary" id="add">${ICON.plus} Neue Karte</button></div>
     ${d.reader_error ? `<div class="card"><b>${esc(d.reader_error)}</b></div>` : ""}
+    ${d.cards.length > 5 ? `<div class="search"><input type="search" id="cq" placeholder="Karten durchsuchen …" autocomplete="off" aria-label="Karten suchen"></div>` : ""}
     <div class="card">${d.cards.length ? `<ul class="list">${d.cards.map((c, i) => `<li>
       <div style="width:46px;flex:none">${c.type === "folder" || !c.type ? cover(c.target, !c.missing) : `<div class="cover" style="--c:var(--surface-2);color:var(--muted);font-size:1.2rem">${c.type === "url" ? "📻" : "⚙"}</div>`}</div>
       <div class="grow"><b>${esc(label(c))}</b><span>Karte ${esc(c.id)}${c.shuffle ? " · Zufall" : ""} ${c.missing ? '<span class="pill bad">Ordner fehlt</span>' : ""}</span></div>
       <button class="iconbtn" data-e="${i}" aria-label="Bearbeiten">${ICON.edit}</button><button class="iconbtn" data-d="${i}" aria-label="Karte löschen">${ICON.trash}</button></li>`).join("")}</ul>`
       : `<div class="empty" style="padding:24px">${ICON.music}<p>Noch keine Karten. Tippe auf „Neue Karte“ oder leg einfach eine Karte auf die Box.</p></div>`}</div>`;
   $("#add").onclick = () => cardDialog();
+  if ($("#cq")) $("#cq").oninput = (e) => { const terms = norm(e.target.value).trim().split(/\s+/).filter(Boolean); $$(".card .list > li").forEach((li, i) => { const c = d.cards[i]; li.hidden = terms.length > 0 && !terms.every((t) => norm(label(c) + " " + c.id).includes(t)); }); };
   $$("[data-e]").forEach((b) => b.onclick = () => { const c = d.cards[b.dataset.e]; cardDialog(c.id, { type: "folder", ...c }); });
   $$("[data-d]").forEach((b) => b.onclick = run(async () => { const c = d.cards[b.dataset.d]; if (await ask("Karte löschen?", `Die Karte für „${label(c)}“ wird frei. Die Musik bleibt erhalten.`, "Löschen", true)) { await api("/api/cards/delete", { id: c.id }); viewCards(); } }));
 });
@@ -425,8 +457,7 @@ const viewSettings = run(async () => {
       <label class="choice"><input type="radio" name="g-mode" value="tap" ${cfg.audio.pause_on_remove ? "" : "checked"}><span><b>Antippen</b><br><span class="muted small">Karte kurz auflegen startet. Wegnehmen ändert nichts, Pause über den Knopf.</span></span></label>
     </div>
     ${sw("g-resume", "Hörspiele fortsetzen", cfg.audio.resume, "Hörspiele gehen an der letzten Stelle weiter, auch nach einer anderen Karte. Musik beginnt immer von vorn.")}
-    ${sw("g-chime", "Startton", cfg.audio.start_sound, "Kurzer Ton, sobald die Box nach dem Einschalten bereit ist")}
-    ${sw("g-ip", "Adresse ansagen", cfg.audio.announce_ip, "Nach dem Verbinden mit dem WLAN sagt die Box ihre Adresse. Jederzeit: Play/Pause drei Sekunden halten.")}
+    <p class="small muted">Beim Einschalten spielt die Box einen kurzen Ton, sobald sie bereit ist. Ihre Adresse sagt sie, wenn du Play/Pause drei Sekunden gedrückt hältst – und nachdem du ihr über das eigene Not-WLAN ein neues WLAN beigebracht hast.</p>
     <div class="actions row" style="margin-top:12px"><button class="btn primary" id="g-save">Speichern</button></div>`)}
   ${sec("buttons", "Knöpfe", `<p class="muted small">Du musst die Box nicht öffnen: „Knopf anlernen“ erkennt selbst, an welchem Anschluss ein Knopf hängt.</p>
     <ul class="list" id="b-list"></ul>
@@ -478,7 +509,7 @@ const viewSettings = run(async () => {
 
   // Allgemein
   for (const k of ["vs", "vm"]) $("#g-" + k).oninput = (e) => $("#g-" + k + "-v").textContent = e.target.value;
-  $("#g-save").onclick = () => save({ name: $("#g-name").value, audio: { volume_start: Math.min(+$("#g-vs").value, +$("#g-vm").value), volume_max: +$("#g-vm").value, resume: $("#g-resume").checked, pause_on_remove: $('[name="g-mode"]:checked').value === "place", start_sound: $("#g-chime").checked, announce_ip: $("#g-ip").checked } });
+  $("#g-save").onclick = () => save({ name: $("#g-name").value, audio: { volume_start: Math.min(+$("#g-vs").value, +$("#g-vm").value), volume_max: +$("#g-vm").value, resume: $("#g-resume").checked, pause_on_remove: $('[name="g-mode"]:checked').value === "place" } });
 
   // Knöpfe
   let btns = cfg.buttons.map((b) => ({ ...b }));
@@ -659,4 +690,6 @@ function paintBackup() {
   S.view = ["now", "hoerspiele", "musik", "cards", "settings"].includes(v) ? v : "now"; S.folder = f ? decodeURIComponent(f) : null;
   $$("#nav button").forEach((b) => b.classList.toggle("active", b.dataset.view === S.view));
   render(); connect();
+  // Service Worker geht nur über HTTPS (oder wenn der Browser die Adresse als sicher einstuft)
+  if ("serviceWorker" in navigator && window.isSecureContext) navigator.serviceWorker.register("/sw.js").catch(() => {});
 })();

@@ -15,8 +15,6 @@ DEFAULTS = {
         "resume": True,          # Hörspiele an der letzten Stelle fortsetzen
         "pause_on_remove": True,   # Kartenmodus: liegen lassen (True) oder antippen (False)
         "stream_port": 8000,
-        "start_sound": True,   # kurzer Ton, wenn die Box bereit ist
-        "announce_ip": True,   # Adresse nach dem Verbinden ansagen
     },
     "wifi": {
         "hotspot": True,              # eigenes WLAN, wenn kein bekanntes erreichbar ist

@@ -156,7 +156,8 @@ class Network:
                     await self._start_hotspot()
                 raise
             await self.refresh()
-            self.on_event("connected", self.ssid)
+            # Aus dem Not-WLAN heraus verbunden: neue Adresse ansagen, weil man sie sonst nicht kennt
+            self.on_event("connected_from_hotspot" if was_hotspot else "connected", self.ssid)
 
     async def forget(self, name):
         if name == HOTSPOT:

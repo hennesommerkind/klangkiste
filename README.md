@@ -14,8 +14,11 @@ einrichten, sichern.
   Ton nur über Kopfhörer, Pause beim Trennen, eigene Höchstlautstärke
 - **Not-WLAN**: ohne bekanntes Netz öffnet die Box nach einer Minute ein eigenes WLAN
   („Klangkiste“, Kennwort einstellbar), Oberfläche dann unter http://10.42.0.1
-- **Ansagen**: Startton, die Box sagt nach dem Verbinden ihre IP-Adresse
-  (jederzeit: Play/Pause drei Sekunden halten)
+- **Ansagen**: Startton beim Systemstart; die Box sagt ihre IP-Adresse, wenn Play/Pause
+  drei Sekunden gehalten wird und nachdem man ihr über das Not-WLAN ein Netz beigebracht hat
+- **Suche** in Hörspielen, Musik (Ordner und Titel) und Karten
+- **Web-App**: auf dem Startbildschirm ablegen (iPhone vollständig; Android mit voller
+  App-Funktion nur über HTTPS bzw. wenn Chrome die Adresse als sicher einstuft)
 - **Update-Knopf** in der Oberfläche: holt die neue Version und spielt auch Systemänderungen ein
 - **Sicherung** zu IONOS HiDrive auf Knopfdruck oder nach Zeitplan, mit Wiederherstellung
 - **Hörspiele und Musik getrennt**, Serien mit Folgen als Unterordner
