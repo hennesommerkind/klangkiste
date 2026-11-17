@@ -22,6 +22,12 @@ DEFAULTS = {
         {"pin": 5, "action": "next"},
     ],
     "rfid": {"enabled": True, "rst_pin": 25, "spi_bus": 0, "spi_device": 0, "spi_speed": 1000000, "gain": 4},
+    "bluetooth": {
+        "device": "",        # gemerkter Kopfhörer (MAC)
+        "name": "",
+        "auto_connect": True,
+        "volume_max": 60,    # eigene Höchstlautstärke für Kopfhörer
+    },
     "mqtt": {
         "enabled": False,
         "host": "",

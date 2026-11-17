@@ -15,6 +15,8 @@ const ICON = {
   edit: '<svg class="icon" viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
   back: '<svg class="icon" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>',
   plus: '<svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
+  headphones: '<svg class="icon" viewBox="0 0 24 24"><path d="M3 14v-2a9 9 0 0 1 18 0v2"/><path d="M21 15a2 2 0 0 1-2 2h-1v-6h1a2 2 0 0 1 2 2zM3 15a2 2 0 0 0 2 2h1v-6H5a2 2 0 0 0-2 2z"/></svg>',
+  bt: '<svg class="icon" viewBox="0 0 24 24"><path d="M7 7l10 10-5 5V2l5 5L7 17"/></svg>',
   sort: '<svg class="icon" viewBox="0 0 24 24"><path d="M7 4v16M3 8l4-4 4 4M17 20V4M13 16l4 4 4-4"/></svg>',
   up: '<svg class="icon" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg>',
   down: '<svg class="icon" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>',
@@ -139,6 +141,7 @@ function viewNow() {
         <button aria-label="Weiter" data-a="next">${ICON.next}</button>
       </div>
       <div class="vol">${ICON.vol}<input type="range" id="np-vol" min="0" max="100" aria-label="Lautstärke"><b id="np-volv"></b></div>
+      <p id="np-hp" class="small" hidden style="margin:8px 0 0;color:var(--accent);font-weight:700">${ICON.headphones} Ton über Kopfhörer</p>
       ${s.spotify ? `<p class="muted small" style="margin-top:14px">Läuft über Spotify. Die Knöpfe an der Box steuern jetzt Spotify; eine aufgelegte Figur übernimmt wieder.</p>` : ""}
       <label class="switch" style="margin-top:14px" ${s.spotify ? "hidden" : ""}><span><b>Im Haus streamen</b><br><span class="muted small">Stellt den Ton für MusicCast bereit</span></span><input type="checkbox" id="np-stream"></label>
     </div></div>
@@ -159,8 +162,9 @@ function updateNow() {
   $("#np-sub").textContent = idle ? "Leg eine Karte auf oder wähle etwas unter „Musik“." : [s.artist, s.album && s.spotify ? s.album : "", s.tracks > 1 ? `Titel ${s.track} von ${s.tracks}` : ""].filter(Boolean).join(" · ");
   $("#np-play").innerHTML = s.state === "play" ? ICON.pause : ICON.play;
   const vol = $("#np-vol");
-  if (!S.volBusy || Date.now() - S.volBusy > 1500) { vol.max = S.cfg?.audio.volume_max || 100; vol.value = s.volume; $("#np-volv").textContent = s.volume; vol.style.setProperty("--p", (s.volume / vol.max * 100) + "%"); }
+  if (!S.volBusy || Date.now() - S.volBusy > 1500) { vol.max = (s.headphones ? S.cfg?.bluetooth?.volume_max : S.cfg?.audio.volume_max) || 100; vol.value = s.volume; $("#np-volv").textContent = s.volume; vol.style.setProperty("--p", (s.volume / vol.max * 100) + "%"); }
   $("#np-stream").checked = !!s.stream;
+  $("#np-hp").hidden = !s.headphones;
   $("#np-du").textContent = fmt(s.duration);
   $$("#np-queue li").forEach((li, i) => li.classList.toggle("current", i === s.track - 1));
   tick();
@@ -425,6 +429,7 @@ const viewSettings = run(async () => {
   ${sec("buttons", "Knöpfe", `<p class="muted small">Du musst die Box nicht öffnen: „Knopf anlernen“ erkennt selbst, an welchem Anschluss ein Knopf hängt.</p>
     <ul class="list" id="b-list"></ul>
     <div class="row wrap" style="margin-top:14px"><button class="btn" id="b-learn">${ICON.plus} Knopf anlernen</button><button class="btn primary" id="b-save">Speichern</button></div>`)}
+  ${sec("bt", "Bluetooth-Kopfhörer", `<div id="bt"><p class="muted">Lade …</p></div>`)}
   ${sec("house", "Im Haus hören", `
     <h2>MusicCast</h2><p>Die Box stellt ihren Ton als Stream bereit. Home Assistant kann ihn auf jedem MusicCast-Gerät abspielen. Der Ton kommt dort einige Sekunden verzögert an.</p>
     <p class="small muted">Adresse des Streams:</p><pre id="h-url">${esc(sys.stream_url)}</pre>
@@ -492,6 +497,9 @@ const viewSettings = run(async () => {
     else { btns.push({ pin: r.pin, action: "play_pause" }); paintButtons(); toast(`Knopf an GPIO ${r.pin} gefunden – Funktion wählen und speichern`); }
   });
 
+  // Kopfhörer
+  api("/api/bluetooth").then(paintBT).catch(() => {});
+
   // Haus
   fetch("/api/homeassistant").then((r) => r.text()).then((t) => { if ($("#h-ha")) $("#h-ha").textContent = t; });
   $("#h-copy").onclick = () => navigator.clipboard?.writeText($("#h-ha").textContent).then(() => toast("Kopiert"), () => toast("Bitte von Hand markieren und kopieren", "error"));
@@ -525,6 +533,40 @@ const viewSettings = run(async () => {
   paintUpdate(sys.update_info || {}, sys);
   $$("[data-p]").forEach((b) => b.onclick = run(async () => { const a = b.dataset.p; if (await ask(a === "reboot" ? "Box neu starten?" : "Box ausschalten?", a === "reboot" ? "Die Wiedergabe stoppt, nach etwa einer Minute ist die Box wieder da." : "Zum Einschalten musst du danach kurz den Strom trennen.", a === "reboot" ? "Neu starten" : "Ausschalten", a !== "reboot")) { await api("/api/system", { action: a }); toast(a === "reboot" ? "Die Box startet neu …" : "Die Box schaltet sich aus …"); } }));
 });
+function paintBT(b) {
+  const el = $("#bt"); if (!el) return;
+  if (!b.available) { el.innerHTML = `<p class="muted">Bluetooth ist auf dieser Box noch nicht eingerichtet. Ein Update unter „System“ richtet es ein.</p>`; return; }
+  const d = b.device;
+  el.innerHTML = `
+    ${d ? `<ul class="list"><li><div style="flex:none;color:var(--muted)">${ICON.headphones}</div><div class="grow"><b>${esc(d.name)}</b><span>${d.connected ? "verbunden – der Ton läuft über den Kopfhörer" : "nicht verbunden – verbindet sich automatisch, sobald er eingeschaltet ist"}</span></div>
+      <span class="pill ${d.connected ? "ok" : ""}">${d.connected ? "Verbunden" : "Aus"}</span></li></ul>
+      <div class="row wrap" style="margin:12px 0 4px">${d.connected ? `<button class="btn" id="bt-off">Trennen</button>` : `<button class="btn" id="bt-on">Jetzt verbinden</button>`}<button class="btn" id="bt-scan">Anderen Kopfhörer koppeln</button><button class="btn danger" id="bt-del">Entfernen</button></div>`
+      : `<p>Noch kein Kopfhörer gekoppelt. Versetze ihn in den Kopplungsmodus (meist die Ein-Taste lang drücken, bis eine Lampe blinkt) und tippe dann auf „Kopfhörer suchen“.</p>
+      <button class="btn primary" id="bt-scan">${ICON.headphones} Kopfhörer suchen</button>`}
+    <label class="field" style="margin-top:18px"><span>Höchste Lautstärke mit Kopfhörer: <b id="bt-vm-v">${b.volume_max}</b></span><input type="range" id="bt-vm" min="10" max="100" value="${b.volume_max}"></label>
+    <button class="btn small" id="bt-save">Speichern</button>
+    <ul class="small muted" style="margin:14px 0 0;padding-left:20px;line-height:1.6"><li>Ist der Kopfhörer verbunden, kommt der Ton nur dort – von Figuren und von Spotify.</li><li>Wird er ausgeschaltet oder geht die Verbindung verloren, pausiert die Wiedergabe, statt laut aus dem Lautsprecher weiterzuspielen.</li><li>Beim Wechsel verbindet sich Spotify neu; am Handy dann „Klangkiste“ noch einmal wählen.</li><li>Stockt der Ton, liegt das meist am WLAN im 2,4-GHz-Band, das sich beim Pi 3 die Antenne mit Bluetooth teilt. 5-GHz-WLAN hilft.</li></ul>`;
+  const busy = (btn, text) => { btn.disabled = true; btn.textContent = text; };
+  $("#bt-vm").oninput = (e) => $("#bt-vm-v").textContent = e.target.value;
+  $("#bt-save").onclick = run(async () => { await api("/api/config", { bluetooth: { volume_max: +$("#bt-vm").value } }); S.cfg = (await api("/api/config")).config; toast("Gespeichert"); });
+  if ($("#bt-on")) $("#bt-on").onclick = run(async (e) => { busy(e.currentTarget, "Verbinde …"); try { paintBT(await api("/api/bluetooth/connect", {})); } catch (err) { paintBT(await api("/api/bluetooth")); throw err; } });
+  if ($("#bt-off")) $("#bt-off").onclick = run(async (e) => { busy(e.currentTarget, "Trenne …"); paintBT(await api("/api/bluetooth/disconnect", {})); });
+  if ($("#bt-del")) $("#bt-del").onclick = run(async () => { if (await ask("Kopfhörer entfernen?", `„${d.name}“ wird vergessen. Zum erneuten Verwenden musst du ihn wieder koppeln.`, "Entfernen", true)) paintBT(await api("/api/bluetooth/forget", {})); });
+  $("#bt-scan").onclick = run(async () => {
+    openDialog(`<h2>Kopfhörer suchen</h2><div class="pulse">${ICON.headphones.replace('class="icon"', 'width="50" height="50" fill="none" stroke="currentColor" stroke-width="1.8"')}</div><p style="text-align:center">Suche etwa 12 Sekunden …<br><span class="muted small">Der Kopfhörer muss im Kopplungsmodus sein.</span></p>`);
+    let list; try { list = await api("/api/bluetooth/scan", {}); } catch (err) { closeDialog(); throw err; }
+    openDialog(`<h2>Gefundene Geräte</h2>${list.length ? `<ul class="list">${list.map((x, i) => `<li><div style="flex:none;color:var(--muted)">${x.audio ? ICON.headphones : ICON.bt}</div><div class="grow"><b>${esc(x.name)}</b><span>${x.audio ? "Kopfhörer / Lautsprecher" : "anderes Gerät"}${x.paired ? " · bereits gekoppelt" : ""}</span></div><button class="btn small ${x.audio ? "primary" : ""}" data-pair="${i}">Koppeln</button></li>`).join("")}</ul>` : `<p class="muted">Nichts gefunden. Ist der Kopfhörer im Kopplungsmodus und in der Nähe der Box?</p>`}
+      <div class="actions"><button class="btn" id="bt-x">Schließen</button><button class="btn" id="bt-again">Noch einmal suchen</button></div>`);
+    $("#bt-x", dialog).onclick = closeDialog;
+    $("#bt-again", dialog).onclick = () => { closeDialog(); setTimeout(() => $("#bt-scan")?.click(), 50); };
+    $$("[data-pair]", dialog).forEach((btn) => btn.onclick = run(async () => {
+      const x = list[btn.dataset.pair];
+      $$("[data-pair]", dialog).forEach((o) => o.disabled = true); btn.textContent = "Kopple …";
+      try { paintBT(await api("/api/bluetooth/pair", { mac: x.mac })); closeDialog(); toast(`„${x.name}“ gekoppelt`); }
+      catch (err) { btn.textContent = "Koppeln"; $$("[data-pair]", dialog).forEach((o) => o.disabled = false); throw err; }
+    }));
+  });
+}
 function paintUpdate(u, sys) {
   const el = $("#upd"); if (!el) return;
   const when = u.checked ? new Date(u.checked).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" }) : "";

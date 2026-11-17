@@ -190,3 +190,4 @@ details.card[open] > summary { margin-bottom: 16px; }
 @media (max-width: 400px) { #nav button { font-size: .66rem; } }
 .cvrow { justify-content: center; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
 @media (max-width: 619px) { .cvrow .btn { padding: 6px 10px; font-size: .8rem; } .cvrow .iconbtn { width: 32px !important; height: 32px !important; } }
+#np-hp .icon { width: 18px; height: 18px; vertical-align: -4px; margin-right: 4px; }

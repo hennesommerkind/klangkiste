@@ -7,6 +7,8 @@ import mpd
 
 log = logging.getLogger("player")
 STREAM_OUTPUT = "Hausstream"
+SPEAKER_OUTPUT = "Lautsprecher"
+HEADPHONE_OUTPUT = "Kopfhörer"
 
 
 class Player:
@@ -27,6 +29,7 @@ class Player:
         self._user_stop = False
         self._prev = {}
         self.current_folder = None
+        self.headphones = False
 
     # ---------- Verbindung ----------
     def _call(self, fn):
@@ -92,6 +95,7 @@ class Player:
             "duration": round(duration, 1),
             "random": st.get("random") == "1",
             "stream": stream,
+            "headphones": self.headphones,
         }
         self._track_resume(new)
         self._publish(new)
@@ -239,8 +243,32 @@ class Player:
     def jump(self, pos):
         self._safe(lambda c: c.play(int(pos)))
 
+    def vmax(self):
+        if self.headphones:
+            return int(self.store.config["bluetooth"]["volume_max"])
+        return int(self.store.config["audio"]["volume_max"])
+
+    def set_headphones(self, on):
+        """Ausgabe umschalten. Beim Trennen wird pausiert, damit es nicht
+        plötzlich laut aus dem Lautsprecher kommt."""
+        self.headphones = bool(on)
+
+        def go(c):
+            if not on and c.status().get("state") == "play":
+                c.pause(1)
+            for o in c.outputs():
+                name = o.get("outputname")
+                if name == HEADPHONE_OUTPUT:
+                    (c.enableoutput if on else c.disableoutput)(o["outputid"])
+                elif name == SPEAKER_OUTPUT:
+                    (c.disableoutput if on else c.enableoutput)(o["outputid"])
+
+        self._safe(go)
+        if on and self.state.get("volume", 0) > self.vmax():
+            self.set_volume(self.vmax())
+
     def set_volume(self, vol):
-        vmax = int(self.store.config["audio"]["volume_max"])
+        vmax = self.vmax()
         vol = max(0, min(vmax, int(vol)))
         self._safe(lambda c: c.setvol(vol))
 

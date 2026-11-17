@@ -2,7 +2,7 @@
 import asyncio, os, shlex, sys
 
 ROOT = sys.argv[1]; PORT = int(sys.argv[2])
-S = {"state": "stop", "volume": 50, "song": 0, "elapsed": 0.0, "random": 0, "queue": [], "outputs": {0: 1, 1: 0}}
+S = {"state": "stop", "volume": 50, "song": 0, "elapsed": 0.0, "random": 0, "queue": [], "outputs": {0: 1, 1: 0, 2: 0}}
 AUDIO = (".mp3", ".ogg", ".flac", ".m4a", ".wav")
 
 def files(uri):
@@ -32,7 +32,7 @@ def handle(cmd, a):
         return r
     if cmd == "outputs":
         r = []
-        for i, n in ((0, "Lautsprecher"), (1, "Hausstream")):
+        for i, n in ((0, "Lautsprecher"), (1, "Hausstream"), (2, "Kopfhörer")):
             r += [f"outputid: {i}", f"outputname: {n}", f"outputenabled: {S['outputs'][i]}"]
         return r
     if cmd == "clear": q.clear(); S["state"] = "stop"; S["song"] = 0

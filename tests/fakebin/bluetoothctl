@@ -1,0 +1,39 @@
+#!/usr/bin/env python3
+"""Attrappe von bluetoothctl für Tests. Zustand in $FAKE_BT (JSON)."""
+import json, os, sys
+path = os.environ.get("FAKE_BT", "/tmp/fake_bt.json")
+try: st = json.load(open(path))
+except Exception:
+    st = {"devices": {"AA:BB:CC:11:22:33": {"name": "Kinder-Kopfhörer", "icon": "audio-headphones", "on": True, "paired": False, "connected": False, "found": False},
+                      "DE:AD:BE:EF:00:01": {"name": "Telefon", "icon": "phone", "on": True, "paired": False, "connected": False, "found": False}}}
+a = [x for x in sys.argv[1:]]
+while a and a[0].startswith("--"): a = a[2:]
+cmd, args = (a[0], a[1:]) if a else ("", [])
+D = st["devices"]
+def save(): json.dump(st, open(path, "w"))
+if cmd == "scan":
+    for d in D.values(): d["found"] = d["found"] or d["on"]
+    print("Discovery started")
+elif cmd == "devices":
+    for m, d in D.items():
+        if d["found"] or d["paired"]:
+            if args and args[0] == "Paired" and not d["paired"]: continue
+            print(f"Device {m} {d['name']}")
+elif cmd == "info":
+    d = D.get(args[0])
+    if not d: print(f"Device {args[0]} not available"); sys.exit(1)
+    print(f"Device {args[0]} (public)\n\tName: {d['name']}\n\tAlias: {d['name']}\n\tIcon: {d['icon']}\n\tPaired: {'yes' if d['paired'] else 'no'}\n\tTrusted: {'yes' if d.get('trusted') else 'no'}\n\tConnected: {'yes' if d['connected'] else 'no'}")
+    if d["icon"].startswith("audio"): print("\tUUID: Audio Sink                (0000110b-0000-1000-8000-00805f9b34fb)")
+elif cmd == "pair":
+    d = D[args[0]]
+    if not d["on"]: print("Failed to pair: org.bluez.Error.ConnectionAttemptFailed"); sys.exit(1)
+    d["paired"] = True; print("Pairing successful")
+elif cmd == "trust": D[args[0]]["trusted"] = True; print("Changing trust succeeded")
+elif cmd == "connect":
+    d = D[args[0]]
+    if not d["on"]: print("Failed to connect: org.bluez.Error.Failed"); save(); sys.exit(1)
+    d["connected"] = True; print("Connection successful")
+elif cmd == "disconnect": D[args[0]]["connected"] = False; print("Successful disconnected")
+elif cmd == "remove": D[args[0]].update(paired=False, connected=False, found=False); print("Device has been removed")
+elif cmd == "power": print("Changing power on succeeded")
+save()

@@ -105,6 +105,14 @@ async def check_updates():
             "checked": dt.datetime.now().isoformat(timespec="minutes")}
 
 
+async def restart_spotify(mock=False):
+    if mock:
+        return
+    code, out = await _sudo("systemctl", "restart", "go-librespot")
+    if code != 0:
+        raise RuntimeError(out[-200:] or "Spotify-Dienst ließ sich nicht neu starten")
+
+
 async def start_update(mock=False):
     """Startet den Update-Dienst (läuft als root, holt die neue Version und
     spielt auch Systemänderungen ein; die Klangkiste startet danach neu)."""

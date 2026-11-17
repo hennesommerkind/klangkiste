@@ -5,6 +5,7 @@ import json
 import logging
 import mimetypes
 import os
+import re
 import time
 from pathlib import Path
 from urllib.parse import urlparse
@@ -13,6 +14,7 @@ from aiohttp import web
 
 from . import __version__, system
 from .backup import Backup, BackupError
+from .bluetooth import Bluetooth, BluetoothError
 from .buttons import Buttons
 from .config import BUTTON_ACTIONS, BUTTON_PINS, Store
 from .library import IMAGES, Library, LibraryError
@@ -51,6 +53,7 @@ class Box:
         self.active_card = None
         self.last_unknown = None
         self.spotify = Spotify(self._on_spotify, args.spotify_url)
+        self.bluetooth = Bluetooth(self.store, self._on_headphones)
         self.controller = "box"          # wer gerade gesteuert wird: „box“ (Karten) oder „spotify“
         self.resume_after_spotify = False
         self.update_info = {}
@@ -70,6 +73,8 @@ class Box:
         app["updates"] = asyncio.create_task(self._update_checker())
         asyncio.create_task(self._startup_volume())
         self.spotify.start()
+        self.bluetooth.start()
+        asyncio.create_task(self._spotify_output(False))
 
     def _init_hardware(self):
         try:
@@ -98,6 +103,7 @@ class Box:
     async def _startup_volume(self):
         for _ in range(60):
             if self.player.state.get("state") != "offline":
+                await asyncio.to_thread(self.player.set_headphones, self.bluetooth.connected)
                 await asyncio.to_thread(self.player.set_volume, self.store.config["audio"]["volume_start"])
                 return
             await asyncio.sleep(1)
@@ -117,6 +123,7 @@ class Box:
         app["scheduler"].cancel()
         app["updates"].cancel()
         await self.spotify.stop()
+        self.bluetooth.stop()
         if self.watcher:
             self.watcher.stop()
         self.buttons.close()
@@ -139,7 +146,8 @@ class Box:
                   "update": bool(self.update_info.get("available"))})
         if self.controller == "spotify":
             sp = self.spotify.info()
-            s.update({"state": "play" if sp["playing"] else "pause", "title": sp["title"] or "Spotify",
+            s.update({"headphones": self.bluetooth.connected,
+                      "state": "play" if sp["playing"] else "pause", "title": sp["title"] or "Spotify",
                       "artist": sp["artist"], "album": sp["album"], "file": "spotify", "folder": None,
                       "url": None, "track": 0, "tracks": 0, "elapsed": sp["elapsed"],
                       "duration": sp["duration"], "random": False, "spotify": True,
@@ -185,6 +193,35 @@ class Box:
         self._emit("state", full)
         self.mqtt.publish_state(full)
 
+    def _on_headphones(self, connected, name):
+        """Läuft im Ereignis-Thread: Ausgabe von Box und Spotify umschalten."""
+        self.loop.run_in_executor(None, self.player.set_headphones, connected)
+        if self.controller == "spotify" and not connected:
+            asyncio.ensure_future(self._spotify_quiet("pause"))
+        asyncio.ensure_future(self._spotify_output(connected))
+        self._emit("toast", {"message": f"Kopfhörer „{name}“ verbunden" if connected
+                             else "Kopfhörer getrennt – Wiedergabe pausiert", "kind": ""})
+        self._emit("state", self.full_state())
+
+    async def _spotify_output(self, headphones):
+        """go-librespot hat keinen Ausgabewechsel im Betrieb: Konfiguration
+        anpassen und den Dienst neu starten (die Spotify-Sitzung beginnt neu)."""
+        p = self.store.dir / "spotify" / "config.yml"
+        try:
+            text = p.read_text("utf-8")
+        except OSError:
+            return
+        want = "bluealsa" if headphones else "default"
+        new = re.sub(r"(?m)^audio_device:.*$", f"audio_device: {want}", text)
+        if new == text:
+            return
+        try:
+            p.write_text(new, "utf-8")
+            await system.restart_spotify(self.mock)
+            log.info("Spotify spielt jetzt über %s", "Kopfhörer" if headphones else "Lautsprecher")
+        except Exception as e:
+            log.warning("Spotify-Ausgabe umschalten: %s", e)
+
     def _take_over_from_spotify(self):
         """Karte oder Oberfläche startet etwas: Spotify pausieren, Box steuern."""
         self.resume_after_spotify = False
@@ -195,7 +232,7 @@ class Box:
 
     async def _spotify_quiet(self, action):
         try:
-            await self.spotify.command(action)
+            await self.spotify.command(action, vmax=self.player.vmax())
         except Exception as e:
             log.info("Spotify: %s", e)
 
@@ -220,7 +257,7 @@ class Box:
         p = self.player
         if self.controller == "spotify" and action in SPOTIFY_ACTIONS:
             fut = asyncio.run_coroutine_threadsafe(
-                self.spotify.command(action, value, self.store.config["audio"]["volume_max"]), self.loop)
+                self.spotify.command(action, value, self.player.vmax()), self.loop)
             fut.result(timeout=8)
             return
         if action == "play_pause":
@@ -680,6 +717,14 @@ def _clean_patch(b, d):
             seen.add(pin)
             btns.append({"pin": pin, "action": x["action"]})
         patch["buttons"] = btns
+    if "bluetooth" in d:
+        bt = d["bluetooth"]
+        out = {}
+        if "volume_max" in bt:
+            out["volume_max"] = max(5, min(100, int(bt["volume_max"])))
+        if "auto_connect" in bt:
+            out["auto_connect"] = bool(bt["auto_connect"])
+        patch["bluetooth"] = out
     if "mqtt" in d:
         m = dict(d["mqtt"])
         if not m.get("password"):
@@ -714,8 +759,8 @@ async def api_config_set(request):
         await asyncio.to_thread(b.buttons.apply)
     if "mqtt" in patch or "name" in patch:
         b.mqtt.start()
-    if "audio" in patch:
-        vmax = b.store.config["audio"]["volume_max"]
+    if "audio" in patch or "bluetooth" in patch:
+        vmax = b.player.vmax()
         if b.player.state.get("volume", 0) > vmax:
             await asyncio.to_thread(b.player.set_volume, vmax)
     b.emit("state", b.full_state())
@@ -726,6 +771,34 @@ async def api_config_set(request):
 async def api_button_learn(request):
     pin = await asyncio.to_thread(box(request).buttons.learn, 15)
     return ok({"pin": pin})
+
+
+# ---------- Bluetooth-Kopfhörer ----------
+@routes.get("/api/bluetooth")
+async def api_bt(request):
+    return ok(await box(request).bluetooth.status())
+
+
+@routes.post("/api/bluetooth/{action}")
+async def api_bt_action(request):
+    bt = box(request).bluetooth
+    a = request.match_info["action"]
+    try:
+        if a == "scan":
+            return ok(await bt.scan())
+        if a == "pair":
+            await bt.pair((await request.json())["mac"])
+        elif a == "connect":
+            await bt.connect()
+        elif a == "disconnect":
+            await bt.disconnect()
+        elif a == "forget":
+            await bt.forget()
+        else:
+            raise web.HTTPNotFound()
+    except BluetoothError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    return ok(await bt.status())
 
 
 # ---------- Sicherung ----------

@@ -39,9 +39,20 @@ if ! python3 -c "import mpd" 2>/dev/null; then
         || { apt-get install -y -q python3-pip && pip3 install --break-system-packages python-mpd2; }
 fi
 
+BT_PKGS="bluez bluez-alsa-utils libasound2-plugin-bluez"
+bt_missing=""
+for p in $BT_PKGS; do dpkg -s "$p" >/dev/null 2>&1 || bt_missing="$bt_missing $p"; done
+if [ -n "$bt_missing" ]; then
+    say "Bluetooth-Pakete installieren"
+    [ -n "$missing" ] || [ "$UPDATE" = 0 ] || apt-get update -q
+    # shellcheck disable=SC2086
+    apt-get install -y -q --no-install-recommends $BT_PKGS \
+        || echo "Bluetooth-Pakete ließen sich nicht installieren – die Box läuft auch ohne Kopfhörer."
+fi
+
 say "Benutzer und Ordner anlegen"
 id klangkiste >/dev/null 2>&1 || useradd --system --home-dir "$DATA" --shell /usr/sbin/nologin klangkiste
-for g in audio gpio spi; do getent group "$g" >/dev/null && usermod -aG "$g" klangkiste; done
+for g in audio gpio spi bluetooth; do getent group "$g" >/dev/null && usermod -aG "$g" klangkiste; done
 install -d -o klangkiste -g klangkiste -m 755 "$DATA" "$DATA/music" "$DATA/spotify"
 
 say "Programm holen"
@@ -117,9 +128,25 @@ if [ "$SPOTIFY" = 1 ]; then
     fi
 fi
 
+say "Bluetooth für Kopfhörer einrichten"
+if command -v bluetoothctl >/dev/null; then
+    command -v rfkill >/dev/null && rfkill unblock bluetooth || true
+    systemctl enable --now bluetooth.service 2>/dev/null || true
+    BA=$(command -v bluealsad || command -v bluealsa || true)   # ab bluez-alsa 5.0 heißt das Programm bluealsad
+    if [ -n "$BA" ] && systemctl cat bluealsa.service >/dev/null 2>&1; then
+        install -d /etc/systemd/system/bluealsa.service.d
+        printf '[Service]\nExecStart=\nExecStart=%s -S -p a2dp-source\n' "$BA" > /etc/systemd/system/bluealsa.service.d/klangkiste.conf
+        systemctl daemon-reload
+        systemctl enable bluealsa.service 2>/dev/null || true
+        systemctl restart bluealsa.service || true
+    else
+        echo "bluez-alsa nicht gefunden – Kopfhörer werden nicht unterstützt."
+    fi
+fi
+
 say "Dienste einrichten"
 cat > /etc/sudoers.d/klangkiste <<'EOF'
-klangkiste ALL=(root) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff, /usr/bin/systemctl restart klangkiste, /usr/bin/systemctl start --no-block klangkiste-update.service
+klangkiste ALL=(root) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff, /usr/bin/systemctl restart klangkiste, /usr/bin/systemctl restart go-librespot, /usr/bin/systemctl start --no-block klangkiste-update.service
 EOF
 chmod 440 /etc/sudoers.d/klangkiste
 install -m 644 "$APP/system/klangkiste.service" /etc/systemd/system/klangkiste.service
