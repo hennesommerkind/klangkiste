@@ -197,3 +197,15 @@ details.card[open] > summary { margin-bottom: 16px; }
 .search input { width: 100%; font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 11px 18px 11px 44px; min-height: 46px;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235d7278' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-4-4'/%3E%3C/svg%3E");
   background-repeat: no-repeat; background-position: 15px center; background-size: 20px; box-shadow: var(--shadow); }
+
+/* Speicherbalken (geprüfte Farben: hell #eb6834/#2a78d6, dunkel #d95926/#3987e5) */
+:root { --seg-system: #8a979b; --seg-hoer: #eb6834; --seg-musik: #2a78d6; --seg-free: var(--line); }
+@media (prefers-color-scheme: dark) { :root { --seg-system: #6b8380; --seg-hoer: #d95926; --seg-musik: #3987e5; } }
+.segbar { display: flex; gap: 2px; height: 10px; border-radius: 999px; overflow: hidden; background: var(--surface); }
+.segbar span { flex-basis: 0; min-width: 3px; height: 100%; }
+.seg-system { background: var(--seg-system); } .seg-hoerspiele { background: var(--seg-hoer); }
+.seg-musik { background: var(--seg-musik); } .seg-frei { background: var(--seg-free); }
+.legend { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: .87rem; color: var(--muted); }
+.legend li { display: flex; align-items: center; gap: 6px; }
+.legend b { color: var(--ink); font-weight: 650; font-variant-numeric: tabular-nums; }
+.legend .sw { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }

@@ -445,6 +445,7 @@ const viewSettings = run(async () => {
   const sec = (id, title, body, extra = "") => `<details class="card" data-s="${id}" ${open === id ? "open" : ""}><summary><span>${title} ${extra}</span></summary>${body}</details>`;
   const sw = (id, label, on, hint = "") => `<label class="switch"><span>${label}${hint ? `<br><span class="muted small">${hint}</span>` : ""}</span><input type="checkbox" id="${id}" ${on ? "checked" : ""}></label>`;
   main.innerHTML = `<div class="head"><h1>Einstellungen</h1></div>
+  ${storageCard(sys.storage)}
   ${sec("general", "Allgemein", `
     <label class="field"><span>Name der Box</span><input type="text" id="g-name" value="${esc(cfg.name)}" maxlength="40"></label>
     <div class="grid2">
@@ -500,7 +501,7 @@ const viewSettings = run(async () => {
   ${sec("system", "System", `<ul class="list">
       <li style="display:block"><div class="row"><div class="grow"><b>Software</b><span>Version ${esc(sys.version)}${sys.revision ? " · Stand " + esc(sys.revision) : ""}${sys.revision_date ? " vom " + esc(sys.revision_date) : ""}${sys.mock ? " · Simulationsmodus" : ""}</span></div></div><div id="upd"></div></li>
       <li><div class="grow"><b>Adresse</b><span>http://${esc(sys.ip || sys.hostname)} · ${esc(sys.hostname)}</span></div></li>
-      <li><div class="grow"><b>Speicher</b><span>${size(sys.disk.free)} von ${size(sys.disk.total)} frei</span></div></li>
+
       ${sys.temperature ? `<li><div class="grow"><b>Temperatur</b><span>${String(sys.temperature).replace(".", ",")} °C</span></div></li>` : ""}
       <li><div class="grow"><b>Abspieler</b><span>${sys.mpd ? "läuft" : "nicht erreichbar"}</span></div></li></ul>
     <div class="row wrap" style="margin-top:14px"><button class="btn" id="s-say">${ICON.vol} Adresse ansagen</button><button class="btn" data-p="reboot">Neu starten</button><button class="btn danger" data-p="shutdown">Ausschalten</button></div>`)}`;
@@ -569,6 +570,17 @@ const viewSettings = run(async () => {
   $("#s-say").onclick = run(async () => { await api("/api/system", { action: "announce" }); if (!sys.tts) toast("Auf der Box ist noch keine Sprachausgabe installiert – ein Update richtet sie ein", "error"); });
   $$("[data-p]").forEach((b) => b.onclick = run(async () => { const a = b.dataset.p; if (await ask(a === "reboot" ? "Box neu starten?" : "Box ausschalten?", a === "reboot" ? "Die Wiedergabe stoppt, nach etwa einer Minute ist die Box wieder da." : "Zum Einschalten musst du danach kurz den Strom trennen.", a === "reboot" ? "Neu starten" : "Ausschalten", a !== "reboot")) { await api("/api/system", { action: a }); toast(a === "reboot" ? "Die Box startet neu …" : "Die Box schaltet sich aus …"); } }));
 });
+// Speicher als ein geteilter Balken: System | Hörspiele | Musik | frei
+function storageCard(st) {
+  if (!st || !st.total) return "";
+  const parts = [["system", "System", st.system], ["hoerspiele", "Hörspiele", st.hoerspiele], ["musik", "Musik", st.musik], ["frei", "Frei", st.free]];
+  const pct = (v) => (v / st.total * 100);
+  const share = (v) => { const p = pct(v); return p > 0 && p < 1 ? "< 1 %" : Math.round(p) + " %"; };
+  const desc = parts.map(([, n, v]) => `${n} ${size(v)} (${share(v)})`).join(", ");
+  return `<div class="card storage"><div class="row" style="justify-content:space-between;align-items:baseline;margin-bottom:10px"><h2 style="margin:0">Speicher</h2><span class="small muted">${size(st.free)} von ${size(st.total)} frei</span></div>
+    <div class="segbar" role="img" aria-label="Speicher: ${esc(desc)}">${parts.filter(([, , v]) => v > 0).map(([k, n, v]) => `<span class="seg-${k}" style="flex-grow:${v}" title="${n}: ${size(v)} (${share(v)})"></span>`).join("")}</div>
+    <ul class="legend">${parts.map(([k, n, v]) => `<li><i class="sw seg-${k}"></i><span>${n}</span><b>${size(v)}</b></li>`).join("")}</ul></div>`;
+}
 function paintWifi(n, cfg) {
   const el = $("#wifi"); if (!el) return;
   if (!n.available) { el.innerHTML = `<p class="muted">Die WLAN-Verwaltung braucht NetworkManager. Der ist auf dieser Box nicht vorhanden.</p>`; return; }

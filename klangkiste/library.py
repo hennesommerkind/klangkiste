@@ -315,6 +315,25 @@ class Library:
             if f.is_file() and f.stem.lower() == "cover" and f.suffix.lower() in IMAGES:
                 f.unlink()
 
+    def _dir_size(self, d):
+        total = 0
+        for dirpath, _, filenames in os.walk(d):
+            for f in filenames:
+                try:
+                    total += os.lstat(os.path.join(dirpath, f)).st_size
+                except OSError:
+                    pass
+        return total
+
+    def usage(self):
+        """Speicheraufteilung: System, Hörspiele, Musik, frei (in Bytes)."""
+        u = shutil.disk_usage(self.root)
+        sizes = {c: self._dir_size(self.root / c) for c in CATEGORIES}
+        other = self._dir_size(self.root) - sum(sizes.values())  # Ordner ohne Kategorie zählen zu Hörspiele
+        h, m = sizes["Hörspiele"] + max(0, other), sizes["Musik"]
+        return {"total": u.total, "free": u.free, "hoerspiele": h, "musik": m,
+                "system": max(0, u.total - u.free - h - m)}
+
     def disk(self):
         u = shutil.disk_usage(self.root)
         return {"total": u.total, "free": u.free}

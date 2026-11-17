@@ -980,7 +980,7 @@ async def api_backup_upload(request):
 async def api_system(request):
     b = box(request)
     info = await asyncio.to_thread(system.info, __version__)
-    info.update({"disk": b.library.disk(), "mock": b.mock, "mpd": b.player.state.get("state") != "offline",
+    info.update({"disk": b.library.disk(), "storage": await asyncio.to_thread(b.library.usage), "mock": b.mock, "mpd": b.player.state.get("state") != "offline",
                  "tts": sounds.tts_engine(),
                  "spotify": b.spotify.available, "update_info": b.update_info,
                  "stream_url": f"http://{info['ip'] or info['hostname']}:{b.store.config['audio']['stream_port']}/klangkiste.mp3"})
