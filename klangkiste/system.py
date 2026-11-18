@@ -1,5 +1,6 @@
 """Systemfunktionen: Infos, Neustart, Ausschalten, Update."""
 import asyncio
+import shutil
 import datetime as dt
 import json
 import re
@@ -141,3 +142,44 @@ async def start_update(mock=False):
     code, out = await _sudo("systemctl", "start", "--no-block", "klangkiste-update.service")
     if code != 0:
         raise RuntimeError("Update konnte nicht gestartet werden – bitte einmal install.sh erneut ausführen. " + out[-200:])
+
+
+# ---------- Netzlaufwerk (Samba) ----------
+SHARE_SCRIPT = "/opt/klangkiste/system/share.sh"
+_mock_share = {"enabled": False}
+
+
+async def share_status(mock=False):
+    """Ist die Freigabe der Musik im Heimnetz möglich und eingeschaltet?"""
+    ip = ip_address()
+    out = {"available": True, "enabled": False, "user": "klangkiste",
+           "windows": f"\\\\{ip}\\Klangkiste" if ip else "", "mac": f"smb://{ip}/Klangkiste" if ip else ""}
+    if mock:
+        out["enabled"] = _mock_share["enabled"]
+        return out
+    if not shutil.which("smbd"):
+        out["available"] = False
+        return out
+    proc = await asyncio.create_subprocess_exec("systemctl", "is-active", "smbd",
+                                                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+    res, _ = await proc.communicate()
+    out["enabled"] = res.decode().strip() == "active"
+    return out
+
+
+async def share_set(enabled, password="", mock=False):
+    if enabled and password and len(password) < 8:
+        raise RuntimeError("Das Kennwort braucht mindestens 8 Zeichen")
+    if "\n" in password or "\r" in password:
+        raise RuntimeError("Das Kennwort darf keinen Zeilenumbruch enthalten")
+    if mock:
+        if enabled and not password and not _mock_share.get("pw"):
+            raise RuntimeError("Bitte ein Kennwort vergeben")
+        _mock_share.update(enabled=bool(enabled), pw=bool(password) or _mock_share.get("pw", False))
+        return
+    proc = await asyncio.create_subprocess_exec(
+        "sudo", "-n", SHARE_SCRIPT, "on" if enabled else "off",
+        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    out, _ = await proc.communicate((password + "\n").encode())
+    if proc.returncode != 0:
+        raise RuntimeError(out.decode("utf-8", "replace").strip()[-200:] or "Die Freigabe ließ sich nicht ändern")

@@ -147,6 +147,23 @@ class Library:
             f["total_tracks"] = f["tracks"] + sum(g["tracks"] for g in out if g["name"].startswith(pre))
         return out
 
+    def signature(self):
+        """Billiger Fingerabdruck des Musikordners: Anzahl, Gesamtgröße, jüngste Änderung."""
+        n = size = 0
+        newest = 0.0
+        for base, dirs, files in os.walk(self.root):
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
+            newest = max(newest, os.stat(base).st_mtime)
+            for f in files:
+                if f.startswith("."):
+                    continue
+                try:
+                    st = os.stat(os.path.join(base, f))
+                except OSError:
+                    continue
+                n, size, newest = n + 1, size + st.st_size, max(newest, st.st_mtime)
+        return n, size, newest
+
     def all_files(self, folder):
         """Alle Titel eines Ordners samt Unterordnern in natürlicher Reihenfolge."""
         d = self.path(folder)

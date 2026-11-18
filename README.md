@@ -82,6 +82,13 @@ Befehle an `klangkiste/cmd/…`: `play_pause`, `play`, `pause`, `next`, `prev`, 
 `vol_up`, `vol_down`, `volume` (0–100), `stream` (ON/OFF), `play_folder` (Ordnername),
 `play_url` (Adresse), `shutdown`.
 
+## Netzlaufwerk
+
+Unter Einstellungen › Netzlaufwerk lässt sich der Musikordner im Heimnetz freigeben (Samba, nur mit
+Kennwort, Benutzer `klangkiste`). Am Computer einbinden: Windows `\\\\<Adresse der Box>\\Klangkiste`,
+Mac `smb://<Adresse der Box>/Klangkiste`. Neue Dateien erkennt die Box nach etwa einer halben Minute.
+Ab Werk ist die Freigabe aus.
+
 ## Wenn die Box schlecht erreichbar ist
 
 `sudo bash /opt/klangkiste/system/diagnose.sh` sammelt Dienste, WLAN-Signal, Stromsparmodus,

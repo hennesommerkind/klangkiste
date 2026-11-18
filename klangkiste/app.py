@@ -83,6 +83,7 @@ class Box:
         self.mqtt.start()
         app["scheduler"] = asyncio.create_task(self.backup.scheduler())
         app["updates"] = asyncio.create_task(self._update_checker())
+        app["watcher"] = asyncio.create_task(self._library_watcher())
         asyncio.create_task(self._startup_volume())
         self.spotify.start()
         self.bluetooth.start()
@@ -147,6 +148,28 @@ class Box:
         self.buttons.close()
         self.mqtt.stop()
         self.player.close()
+
+    async def _library_watcher(self):
+        """Dateien können auch am Netzlaufwerk vorbei auf die Box kommen. Ändert sich der
+        Musikordner und bleibt danach eine Runde lang ruhig (Kopieren fertig), lernt MPD ihn neu."""
+        last = pending = None
+        while True:
+            await asyncio.sleep(20)
+            try:
+                sig = await asyncio.to_thread(self.library.signature)
+                if last is None:
+                    last = sig
+                elif sig != last:
+                    if sig == pending:
+                        last, pending = sig, None
+                        log.info("Musikordner hat sich geändert – Datenbank wird aktualisiert")
+                        await asyncio.to_thread(self.player.update_db)
+                    else:
+                        pending = sig
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("Musikordner überwachen")
 
     def _after_restore(self):
         def go():
@@ -942,6 +965,22 @@ async def api_bt_action(request):
     except BluetoothError as e:
         return web.json_response({"error": str(e)}, status=400)
     return ok(await bt.status())
+
+
+# ---------- Netzlaufwerk ----------
+@routes.get("/api/share")
+async def api_share(request):
+    return ok(await system.share_status(box(request).mock))
+
+
+@routes.post("/api/share")
+async def api_share_set(request):
+    b, d = box(request), await request.json()
+    try:
+        await system.share_set(bool(d.get("enabled")), str(d.get("password") or ""), b.mock)
+    except RuntimeError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    return ok(await system.share_status(b.mock))
 
 
 # ---------- WLAN ----------

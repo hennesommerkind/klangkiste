@@ -208,9 +208,28 @@ else
     echo "NetworkManager nicht gefunden – das eigene Not-WLAN steht nicht zur Verfügung."
 fi
 
+say "Netzlaufwerk vorbereiten"
+# Samba nur installieren; eingeschaltet wird die Freigabe erst in den Einstellungen.
+if ! command -v smbd >/dev/null; then
+    apt-get update -qq || true
+    if DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends samba >/dev/null; then
+        systemctl disable --now smbd >/dev/null 2>&1 || true
+    else
+        echo "Hinweis: Samba ließ sich nicht installieren – das Netzlaufwerk steht nicht zur Verfügung"
+    fi
+fi
+if command -v smbd >/dev/null; then
+    systemctl disable --now nmbd samba-ad-dc >/dev/null 2>&1 || true
+    if ! cmp -s "$APP/system/smb.conf" /etc/samba/smb.conf; then
+        [ -f /etc/samba/smb.conf.original ] || cp -a /etc/samba/smb.conf /etc/samba/smb.conf.original 2>/dev/null || true
+        install -m 644 "$APP/system/smb.conf" /etc/samba/smb.conf
+        systemctl is-active -q smbd && systemctl restart smbd || true
+    fi
+fi
+
 say "Dienste einrichten"
 cat > /etc/sudoers.d/klangkiste <<'EOF'
-klangkiste ALL=(root) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff, /usr/bin/systemctl restart klangkiste, /usr/bin/systemctl restart go-librespot, /usr/bin/systemctl start --no-block klangkiste-update.service
+klangkiste ALL=(root) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff, /usr/bin/systemctl restart klangkiste, /usr/bin/systemctl restart go-librespot, /usr/bin/systemctl start --no-block klangkiste-update.service, /opt/klangkiste/system/share.sh
 EOF
 chmod 440 /etc/sudoers.d/klangkiste
 install -m 644 "$APP/system/klangkiste.service" /etc/systemd/system/klangkiste.service

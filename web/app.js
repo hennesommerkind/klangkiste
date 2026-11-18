@@ -484,6 +484,7 @@ const viewSettings = run(async () => {
     <div class="actions row" style="margin-top:12px"><button class="btn primary" id="e-save">Speichern</button></div>`)}
   ${sec("wifi", "WLAN", `<div id="wifi"><p class="muted">Lade …</p></div>`)}
   ${sec("bt", "Bluetooth-Kopfhörer", `<div id="bt"><p class="muted">Lade …</p></div>`)}
+  ${sec("share", "Netzlaufwerk", `<div id="share"><p class="muted">Lade …</p></div>`)}
   ${sec("house", "Im Haus hören", `
     <h2>MusicCast</h2><p>Die Box stellt ihren Ton als Stream bereit. Home Assistant kann ihn auf jedem MusicCast-Gerät abspielen. Der Ton kommt dort einige Sekunden verzögert an.</p>
     <p class="small muted">Adresse des Streams:</p><pre id="h-url">${esc(sys.stream_url)}</pre>
@@ -557,6 +558,7 @@ const viewSettings = run(async () => {
   // Kopfhörer, WLAN
   api("/api/bluetooth").then(paintBT).catch(() => {});
   api("/api/network").then((n) => paintWifi(n, cfg)).catch(() => {});
+  api("/api/share").then(paintShare).catch(() => {});
 
   // Haus
   fetch("/api/homeassistant").then((r) => r.text()).then((t) => { if ($("#h-ha")) $("#h-ha").textContent = t; });
@@ -603,6 +605,26 @@ function storageCard(st) {
     <div class="segbar" role="img" aria-label="Speicher: ${esc(desc)}">${parts.filter(([, , v]) => v > 0).map(([k, n, v]) => `<span class="seg-${k}" style="flex-grow:${v}" title="${n}: ${size(v)} (${share(v)})"></span>`).join("")}</div>
     <ul class="legend">${parts.map(([k, n, v]) => `<li><i class="sw seg-${k}"></i><span>${n}</span><b>${size(v)}</b></li>`).join("")}</ul></div>`;
 }
+function paintShare(sh) {
+  const el = $("#share"); if (!el) return;
+  const sw = (id, label, on, hint) => `<label class="switch"><span>${label}<br><span class="muted small">${hint}</span></span><input type="checkbox" id="${id}" ${on ? "checked" : ""}></label>`;
+  const busy = (btn, text) => { btn.disabled = true; btn.textContent = text; };
+  if (!sh.available) { el.innerHTML = `<p class="muted">Das Netzlaufwerk ist auf dieser Box nicht eingerichtet. Ein Update über System › „Jetzt aktualisieren“ holt das nach.</p>`; return; }
+  el.innerHTML = `<p>Hörspiele und Musik als Laufwerk am Computer einbinden – praktisch, um viele Dateien zu kopieren oder umzusortieren. Neue Dateien erkennt die Box nach etwa einer halben Minute von selbst.</p>
+    <div class="status-line"><span class="pill ${sh.enabled ? "ok" : ""}">${sh.enabled ? "Eingeschaltet" : "Ausgeschaltet"}</span></div>
+    ${sw("sh-on", "Netzlaufwerk einschalten", sh.enabled, "Jedes Gerät im WLAN, das das Kennwort kennt, kann dann Dateien ändern und löschen.")}
+    <label class="field"><span>Kennwort ${sh.enabled ? "(leer lassen = bleibt)" : "(mindestens 8 Zeichen)"}</span><input type="password" id="sh-pw" autocomplete="new-password"></label>
+    ${sh.enabled ? `<p class="small muted">Windows – im Explorer in die Adresszeile:</p><pre>${esc(sh.windows)}</pre>
+    <p class="small muted">Mac – im Finder „Gehe zu › Mit Server verbinden“:</p><pre>${esc(sh.mac)}</pre>
+    <p class="small muted">Benutzername: <b>${esc(sh.user)}</b>, dazu dein Kennwort.</p>` : ""}
+    <div class="actions row"><button class="btn primary" id="sh-save">Speichern</button></div>`;
+  $("#sh-save").onclick = run(async (e) => {
+    busy(e.currentTarget, "Speichere …");
+    try { paintShare(await api("/api/share", { enabled: $("#sh-on").checked, password: $("#sh-pw").value })); toast("Gespeichert"); }
+    catch (err) { paintShare(await api("/api/share")); throw err; }
+  });
+}
+
 function paintWifi(n, cfg) {
   const el = $("#wifi"); if (!el) return;
   if (!n.available) { el.innerHTML = `<p class="muted">Die WLAN-Verwaltung braucht NetworkManager. Der ist auf dieser Box nicht vorhanden.</p>`; return; }
