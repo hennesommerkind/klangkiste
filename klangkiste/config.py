@@ -21,6 +21,9 @@ DEFAULTS = {
         "hotspot_ssid": "Klangkiste",
         "hotspot_password": "klangkiste",
     },
+    "system": {
+        "leds": True,                 # Lämpchen auf der Platine des Raspberry Pi (rot/grün)
+    },
     "buttons": [
         {"pin": 27, "action": "prev"},
         {"pin": 12, "action": "play_pause"},

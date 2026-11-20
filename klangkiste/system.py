@@ -1,5 +1,6 @@
 """Systemfunktionen: Infos, Neustart, Ausschalten, Update."""
 import asyncio
+import os
 import shutil
 import datetime as dt
 import json
@@ -142,6 +143,41 @@ async def start_update(mock=False):
     code, out = await _sudo("systemctl", "start", "--no-block", "klangkiste-update.service")
     if code != 0:
         raise RuntimeError("Update konnte nicht gestartet werden – bitte einmal install.sh erneut ausführen. " + out[-200:])
+
+
+# ---------- Lämpchen auf der Platine ----------
+LED_DIR = Path(os.environ.get("KLANGKISTE_LED_DIR", "/sys/class/leds"))
+# Name im System → Auslöser im Normalbetrieb (grün = Kartenzugriff, rot = Strom)
+LEDS = {"ACT": "mmc0", "led0": "mmc0", "PWR": "default-on", "led1": "default-on"}
+_led_normal = {}
+
+
+def leds_available():
+    """Gibt es Lämpchen, die die Klangkiste schalten darf? (Rechte setzt install.sh per udev-Regel.)"""
+    return any(os.access(LED_DIR / n / "brightness", os.W_OK) and os.access(LED_DIR / n / "trigger", os.W_OK)
+               for n in LEDS)
+
+
+def set_leds(on):
+    """Schaltet die Lämpchen des Raspberry Pi aus oder zurück in den Normalbetrieb. Wirkt sofort,
+    hält aber nur bis zum nächsten Start – die Klangkiste setzt es deshalb bei jedem Start neu."""
+    done = False
+    for name, default in LEDS.items():
+        d = LED_DIR / name
+        try:
+            if name not in _led_normal:
+                m = re.search(r"\[([^\]]+)\]", (d / "trigger").read_text())
+                cur = m.group(1) if m else ""
+                _led_normal[name] = cur if cur and cur != "none" else default
+            if on:
+                (d / "trigger").write_text(_led_normal[name])
+            else:
+                (d / "trigger").write_text("none")
+                (d / "brightness").write_text("0")
+            done = True
+        except OSError:
+            continue
+    return done
 
 
 # ---------- Netzlaufwerk (Samba) ----------
