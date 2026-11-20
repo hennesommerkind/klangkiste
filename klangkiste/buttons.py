@@ -87,8 +87,10 @@ class Buttons:
                 dev.pin.when_changed = cb
             press = enc.get("press")
             if press in BUTTON_ACTIONS:
-                btn = Button(sw, pull_up=True, bounce_time=0.05)
-                btn.when_pressed = lambda a=press: self.dispatch(a)
+                # Erst auslösen, wenn der Taster 0,12 s am Stück gedrückt ist. Die Leitung hängt nur
+                # am schwachen Pull-up des Pi; ein Wackler oder Störimpuls zählte sonst als Druck.
+                btn = Button(sw, pull_up=True, hold_time=0.12)
+                btn.when_held = lambda a=press: self._pressed(a)
                 self._devices.append(btn)
         except Exception as e:
             self.errors["encoder"] = str(e)
@@ -118,6 +120,10 @@ class Buttons:
                          "nichts" if not step else "lauter" if step * e["sign"] > 0 else "leiser")
         if step:
             self._turn(step * e["sign"])
+
+    def _pressed(self, action):
+        log.info("Drehregler gedrückt → %s", action)
+        self.dispatch(action)
 
     def _turn(self, direction):
         # Schnelles Drehen bündeln: ein Befehl alle 60 ms statt einer pro Raste
