@@ -96,6 +96,8 @@ class Box:
             self.buttons.apply()
         except Exception as e:
             log.warning("Knöpfe nicht verfügbar: %s", e)
+        if not self.store.config["system"]["leds"]:
+            system.set_leds(False)
         cfg = self.store.config["rfid"]
         if self.mock:
             self.reader = MockReader()
@@ -838,6 +840,9 @@ def _clean_patch(b, d):
             if k in a:
                 out[k] = bool(a[k])
         patch["audio"] = out
+    if "system" in d:
+        if "leds" in d["system"]:
+            patch["system"] = {"leds": bool(d["system"]["leds"])}
     if "buttons" in d:
         btns, seen = [], set()
         for x in d["buttons"]:
@@ -923,6 +928,8 @@ async def api_config_set(request):
     b.store.update_config(patch)
     if "buttons" in patch or "encoder" in patch:
         await asyncio.to_thread(b.buttons.apply)
+    if "system" in patch:
+        await asyncio.to_thread(system.set_leds, patch["system"]["leds"])
     if "mqtt" in patch or "name" in patch:
         b.mqtt.start()
     if "audio" in patch or "bluetooth" in patch:
@@ -1080,6 +1087,7 @@ async def api_system(request):
     info = await asyncio.to_thread(system.info, __version__)
     info.update({"disk": b.library.disk(), "storage": await asyncio.to_thread(b.library.usage), "mock": b.mock, "mpd": b.player.state.get("state") != "offline",
                  "tts": sounds.tts_engine(),
+                 "leds": system.leds_available(), "leds_on": b.store.config["system"]["leds"],
                  "spotify": b.spotify.available, "update_info": b.update_info,
                  "stream_url": f"http://{info['ip'] or info['hostname']}:{b.store.config['audio']['stream_port']}/klangkiste.mp3"})
     return ok(info)

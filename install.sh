@@ -208,6 +208,16 @@ else
     echo "NetworkManager nicht gefunden – das eigene Not-WLAN steht nicht zur Verfügung."
 fi
 
+say "Lämpchen der Platine freigeben"
+# Die Klangkiste darf die rote und grüne LED des Raspberry Pi schalten (Einstellungen › System).
+LEDRULE='SUBSYSTEM=="leds", KERNEL=="ACT|PWR|led0|led1", ACTION=="add|change", RUN+="/bin/sh -c '"'"'chgrp klangkiste /sys%p/trigger /sys%p/brightness; chmod g+w /sys%p/trigger /sys%p/brightness'"'"'"'
+if [ "$(cat /etc/udev/rules.d/60-klangkiste-leds.rules 2>/dev/null)" != "$LEDRULE" ]; then
+    echo "$LEDRULE" > /etc/udev/rules.d/60-klangkiste-leds.rules
+    udevadm control --reload 2>/dev/null || true
+fi
+udevadm trigger --subsystem-match=leds --action=change 2>/dev/null || true
+udevadm settle --timeout=5 2>/dev/null || true
+
 say "Netzlaufwerk vorbereiten"
 # Samba nur installieren; eingeschaltet wird die Freigabe erst in den Einstellungen.
 if ! command -v smbd >/dev/null; then

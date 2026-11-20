@@ -524,6 +524,7 @@ const viewSettings = run(async () => {
 
       ${sys.temperature ? `<li><div class="grow"><b>Temperatur</b><span>${String(sys.temperature).replace(".", ",")} °C</span></div></li>` : ""}
       <li><div class="grow"><b>Abspieler</b><span>${sys.mpd ? "läuft" : "nicht erreichbar"}</span></div></li></ul>
+    ${sys.leds ? sw("s-leds", "Lämpchen am Raspberry Pi", sys.leds_on, "Rotes und grünes Licht auf der Platine. Aus, wenn es durch das Gehäuse scheint.") : `<p class="muted small" style="margin-top:14px">Die Lämpchen am Raspberry Pi lassen sich auf dieser Box noch nicht schalten. Ein Update über „Jetzt aktualisieren“ richtet das ein.</p>`}
     <div class="row wrap" style="margin-top:14px"><button class="btn" id="s-say">${ICON.vol} Adresse ansagen</button><button class="btn" data-p="reboot">Neu starten</button><button class="btn danger" data-p="shutdown">Ausschalten</button></div>`)}`;
   $$("details.card").forEach((d) => d.addEventListener("toggle", () => { if (d.open) { S.openSection = d.dataset.s; $$("details.card").forEach((o) => { if (o !== d) o.open = false; }); } }));
   const save = (patch, msg = "Gespeichert") => run(async () => { await api("/api/config", patch); toast(msg); viewSettings(); })();
@@ -591,6 +592,7 @@ const viewSettings = run(async () => {
 
   // System
   paintUpdate(sys.update_info || {}, sys);
+  if ($("#s-leds")) $("#s-leds").onchange = run(async (e) => { await api("/api/config", { system: { leds: e.target.checked } }); toast(e.target.checked ? "Lämpchen an" : "Lämpchen aus"); });
   $("#s-say").onclick = run(async () => { await api("/api/system", { action: "announce" }); if (!sys.tts) toast("Auf der Box ist noch keine Sprachausgabe installiert – ein Update richtet sie ein", "error"); });
   $$("[data-p]").forEach((b) => b.onclick = run(async () => { const a = b.dataset.p; if (await ask(a === "reboot" ? "Box neu starten?" : "Box ausschalten?", a === "reboot" ? "Die Wiedergabe stoppt, nach etwa einer Minute ist die Box wieder da." : "Zum Einschalten musst du danach kurz den Strom trennen.", a === "reboot" ? "Neu starten" : "Ausschalten", a !== "reboot")) { await api("/api/system", { action: a }); toast(a === "reboot" ? "Die Box startet neu …" : "Die Box schaltet sich aus …"); } }));
 });
