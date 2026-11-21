@@ -83,6 +83,16 @@ Befehle an `klangkiste/cmd/…`: `play_pause`, `play`, `pause`, `next`, `prev`, 
 `vol_up`, `vol_down`, `volume` (0–100), `stream` (ON/OFF), `play_folder` (Ordnername),
 `play_url` (Adresse), `shutdown`.
 
+## Android-App
+
+Im Ordner `android/` liegt eine schlanke App (WebView-Hülle um die Weboberfläche). Sie findet die Box
+per mDNS (`_klangkiste._tcp`, von Avahi angekündigt) oder über bekannte Namen und merkt sich die Adresse.
+GitHub Actions baut sie bei jeder Änderung und legt sie als Release `klangkiste.apk` ab; die Box lädt sie
+beim Update und bietet sie unter Einstellungen › „Als App installieren“ zum Herunterladen an.
+Der Signaturschlüssel liegt nicht im Repository: Er kommt aus den Repository-Secrets `KLANGKISTE_KEYSTORE`
+(Base64) und `KLANGKISTE_KEYSTORE_PASS`, sonst aus dem Cache der Actions. Verfällt der Cache, wird die App
+mit neuem Schlüssel gebaut und muss einmal deinstalliert und neu installiert werden.
+
 ## Netzlaufwerk
 
 Unter Einstellungen › Netzlaufwerk lässt sich der Musikordner im Heimnetz freigeben (Samba, nur mit

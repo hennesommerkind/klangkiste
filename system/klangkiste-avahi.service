@@ -1,0 +1,14 @@
+<?xml version="1.0" standalone='no'?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<!-- Damit die Android-App die Box im WLAN findet -->
+<service-group>
+  <name replace-wildcards="yes">Klangkiste (%h)</name>
+  <service>
+    <type>_klangkiste._tcp</type>
+    <port>80</port>
+  </service>
+  <service>
+    <type>_http._tcp</type>
+    <port>80</port>
+  </service>
+</service-group>

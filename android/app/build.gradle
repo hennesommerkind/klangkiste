@@ -1,0 +1,32 @@
+plugins { id "com.android.application" }
+
+android {
+    namespace "de.klangkiste.app"
+    compileSdk 34
+    defaultConfig {
+        applicationId "de.klangkiste.app"
+        minSdk 24
+        targetSdk 34
+        versionCode Integer.parseInt(System.getenv("GITHUB_RUN_NUMBER") ?: "1")
+        versionName "1." + (System.getenv("GITHUB_RUN_NUMBER") ?: "0")
+    }
+    signingConfigs {
+        release {
+            // Schlüssel kommt aus dem Build (GitHub Actions), nie aus dem Repository.
+            storeFile file(System.getenv("KS_STORE") ?: "missing.keystore")
+            storePassword System.getenv("KS_PASS") ?: ""
+            keyAlias "klangkiste"
+            keyPassword System.getenv("KS_PASS") ?: ""
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

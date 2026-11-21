@@ -237,6 +237,22 @@ if command -v smbd >/dev/null; then
     fi
 fi
 
+say "Android-App"
+# Im Heimnetz auffindbar machen (die App sucht nach „_klangkiste._tcp“)
+if [ -d /etc/avahi/services ] && ! cmp -s "$APP/system/klangkiste-avahi.service" /etc/avahi/services/klangkiste.service; then
+    install -m 644 "$APP/system/klangkiste-avahi.service" /etc/avahi/services/klangkiste.service
+fi
+# Die fertige App kommt aus den Releases des Repositorys (gebaut von GitHub Actions)
+APK_URL=https://github.com/hennesommerkind/klangkiste/releases/latest/download/klangkiste.apk
+if curl -fsSL --retry 2 -m 120 -o "$DATA/klangkiste.apk.neu" "$APK_URL" 2>/dev/null && [ -s "$DATA/klangkiste.apk.neu" ]; then
+    mv "$DATA/klangkiste.apk.neu" "$DATA/klangkiste.apk"
+    chown klangkiste:klangkiste "$DATA/klangkiste.apk"
+    echo "App geladen ($(du -h "$DATA/klangkiste.apk" | cut -f1))"
+else
+    rm -f "$DATA/klangkiste.apk.neu"
+    echo "Hinweis: Android-App gerade nicht verfügbar – beim nächsten Update erneut"
+fi
+
 say "Dienste einrichten"
 cat > /etc/sudoers.d/klangkiste <<'EOF'
 klangkiste ALL=(root) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff, /usr/bin/systemctl restart klangkiste, /usr/bin/systemctl restart go-librespot, /usr/bin/systemctl start --no-block klangkiste-update.service, /opt/klangkiste/system/share.sh

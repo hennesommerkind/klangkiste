@@ -1087,6 +1087,7 @@ async def api_system(request):
     info = await asyncio.to_thread(system.info, __version__)
     info.update({"disk": b.library.disk(), "storage": await asyncio.to_thread(b.library.usage), "mock": b.mock, "mpd": b.player.state.get("state") != "offline",
                  "tts": sounds.tts_engine(),
+                 "apk": (b.store.dir / "klangkiste.apk").is_file(),
                  "leds": system.leds_available(), "leds_on": b.store.config["system"]["leds"],
                  "spotify": b.spotify.available, "update_info": b.update_info,
                  "stream_url": f"http://{info['ip'] or info['hostname']}:{b.store.config['audio']['stream_port']}/klangkiste.mp3"})
@@ -1151,6 +1152,16 @@ async def api_debug_card(request):
     return ok()
 
 
+async def apk(request):
+    """Die Android-App zum Herunterladen (lädt das Update aus den GitHub-Releases)."""
+    f = box(request).store.dir / "klangkiste.apk"
+    if not f.is_file():
+        raise web.HTTPNotFound(text="Die App ist noch nicht auf der Box – bitte einmal aktualisieren.")
+    return web.FileResponse(f, headers={"Content-Type": "application/vnd.android.package-archive",
+                                        "Content-Disposition": 'attachment; filename="klangkiste.apk"',
+                                        "Cache-Control": "no-cache"})
+
+
 async def manifest(request):
     name = box(request).store.config["name"] or "Klangkiste"
     return web.json_response({
@@ -1189,6 +1200,7 @@ def make_app(args):
     app.add_routes(routes)
     app.router.add_get("/", index)
     app.router.add_get("/manifest.webmanifest", manifest)
+    app.router.add_get("/klangkiste.apk", apk)
     app.router.add_get("/sw.js", service_worker)
     app.router.add_static("/static/", WEB)
     app.on_startup.append(b.start)
