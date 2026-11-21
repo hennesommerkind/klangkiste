@@ -83,13 +83,22 @@ Befehle an `klangkiste/cmd/…`: `play_pause`, `play`, `pause`, `next`, `prev`, 
 `vol_up`, `vol_down`, `volume` (0–100), `stream` (ON/OFF), `play_folder` (Ordnername),
 `play_url` (Adresse), `shutdown`.
 
-## 3D-Figuren über dem Cover
+## Figuren über dem Cover
 
-Zu jedem Ordner lässt sich die STL-Datei der gebastelten Figur hochladen (Ordneransicht › „3D-Figur“
-oder Karten › Figur-Symbol). Der Browser zeichnet sie einmal (`web/stl.js`, ohne Bibliothek), Farbe,
-Drehung und Blickwinkel sind einstellbar; gespeichert wird nur ein PNG als `.figur.png` im Ordner – es
-wandert beim Verschieben mit und wird mit der Musik gesichert. Die Figur steht halb über dem Cover in der
-Übersicht, in der Ordneransicht, bei „Läuft“ und in der Kartenliste; Folgen zeigen die Figur ihrer Serie.
+Zu jedem Ordner lässt sich die Figur zeigen, die zur Karte gehört (Ordneransicht › „Figur“ oder
+Karten › Figur-Symbol). Zwei Wege:
+
+- **3D-Datei:** STL (eine Farbe, wählbar), 3MF mit den Filamentfarben aus Bambu Studio/OrcaSlicer/
+  PrusaSlicer (Teile je Extruder und bemalte Flächen), GLB/glTF mit Textur oder Vertexfarben, OBJ mit
+  .mtl und Texturbild bzw. Vertexfarben. Drehung, Blickwinkel und Achse sind einstellbar.
+  Draco-/Meshopt-komprimierte GLB werden nicht unterstützt.
+- **Foto:** die echte Figur vor einfarbigem Hintergrund; der Hintergrund wird vom Rand aus entfernt
+  (Regler für die Stärke), schon freigestellte PNG bleiben, wie sie sind.
+
+`web/model.js` zeichnet alles im Browser (ohne Bibliothek, ohne WebGL); gespeichert wird nur ein PNG
+als `.figur.png` im Ordner – es wandert beim Verschieben mit und wird mit der Musik gesichert. Die Figur
+steht halb über dem Cover in der Übersicht, in der Ordneransicht, bei „Läuft“ und in der Kartenliste;
+Folgen zeigen die Figur ihrer Serie.
 
 ## Android-App
 

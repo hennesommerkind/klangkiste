@@ -132,61 +132,96 @@ function nowCover(s, idle) {
 const FIGICON = `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2.6"/><path d="M8.5 21l1-7.5L7 11l2.2-2.6h5.6L17 11l-2.5 2.5 1 7.5"/><path d="M6 21h12"/></svg>`;
 function loadScript(src) {
   return new Promise((res, rej) => {
-    if (document.querySelector(`script[src="${src}"]`) && window.KlangkisteSTL) return res();
+    if (document.querySelector(`script[src="${src}"]`) && window.KlangkisteModel) return res();
     const s = document.createElement("script"); s.src = src; s.onload = res; s.onerror = () => rej(new Error("Konnte den Figuren-Zeichner nicht laden")); document.head.appendChild(s);
   });
 }
 function figureDialog(folder, has, after) {
   const COLORS = ["#e8dfd0", "#d9b38c", "#9c6b45", "#5b6b73", "#2f3a3d", "#c94f3d", "#e0a33a", "#4f8f5b", "#3d74b8", "#a46bb8"];
-  const st = { tris: null, color: localStorage.getItem("kk-figcolor") || COLORS[0], yaw: -25, pitch: 12, zUp: true };
-  openDialog(`<h2>3D-Figur für „${esc(leaf(folder))}“</h2>
-    <p class="small muted" style="margin-top:-4px">Wähle die STL-Datei der Figur, mit der du diese Karte gebastelt hast. Die Box zeigt sie dann halb über dem Cover – in der Übersicht, in der Ordneransicht und bei „Läuft“.</p>
-    <label class="btn" style="width:100%;justify-content:center">${FIGICON} STL-Datei wählen<input type="file" id="fg-file" hidden></label>
+  const st = { kind: null, model: null, photo: null, color: localStorage.getItem("kk-figcolor") || COLORS[0], yaw: -25, pitch: 12, zUp: null, original: true, tol: 30 };
+  openDialog(`<h2>Figur für „${esc(leaf(folder))}“</h2>
+    <p class="small muted" style="margin-top:-4px">Die Figur steht dann halb über dem Cover – in der Übersicht, in der Ordneransicht und bei „Läuft“.</p>
+    <div class="fg-pick">
+      <label class="btn">${FIGICON} 3D-Datei<input type="file" id="fg-file" multiple hidden></label>
+      <label class="btn">${ICON.camera} Foto<input type="file" id="fg-photo" accept="image/*" hidden></label>
+    </div>
+    <p class="small muted" style="margin:8px 0 0">3D: STL, 3MF (mit Druckfarben aus Bambu Studio), GLB/glTF oder OBJ (mit Textur). Bei OBJ die .mtl und das Bild mit auswählen. Foto: Figur vor einfarbigem Hintergrund, am besten weißes Papier.</p>
     <div id="fg-stage" class="fg-stage" hidden><div class="figwrap has-fig fg-prev">${cover(folder, true)}<canvas id="fg-canvas"></canvas></div></div>
     <p id="fg-msg" class="small muted" style="min-height:1.2em;margin:10px 0 0"></p>
     <div id="fg-ctl" hidden>
-      <div class="field"><span>Farbe</span><div class="row wrap" id="fg-colors" style="gap:6px">${COLORS.map((c) => `<button class="fg-sw" data-c="${c}" style="background:${c}" aria-label="Farbe ${c}"></button>`).join("")}<input type="color" id="fg-color" aria-label="Eigene Farbe" style="width:34px;height:34px;padding:0;border:0;background:none"></div></div>
-      <label class="field"><span>Drehen: <b id="fg-yaw-v">-25</b>°</span><input type="range" id="fg-yaw" min="-180" max="180" value="-25"></label>
-      <label class="field"><span>Von oben: <b id="fg-pitch-v">12</b>°</span><input type="range" id="fg-pitch" min="-10" max="45" value="12"></label>
-      <label class="switch"><span>Figur liegt falsch herum<br><span class="muted small">Wenn sie auf dem Rücken liegt oder kopfsteht</span></span><input type="checkbox" id="fg-axis"></label>
+      <div id="fg-c-model">
+        <label class="switch" id="fg-orig-row"><span>Originalfarben der Datei<br><span class="muted small">Aus: eine Farbe für die ganze Figur</span></span><input type="checkbox" id="fg-orig" checked></label>
+        <div class="field" id="fg-colrow"><span>Farbe</span><div class="row wrap" style="gap:6px">${COLORS.map((c) => `<button class="fg-sw" data-c="${c}" style="background:${c}" aria-label="Farbe ${c}"></button>`).join("")}<input type="color" id="fg-color" aria-label="Eigene Farbe" style="width:34px;height:34px;padding:0;border:0;background:none"></div></div>
+        <label class="field"><span>Drehen: <b id="fg-yaw-v">-25</b>°</span><input type="range" id="fg-yaw" min="-180" max="180" value="-25"></label>
+        <label class="field"><span>Von oben: <b id="fg-pitch-v">12</b>°</span><input type="range" id="fg-pitch" min="-10" max="45" value="12"></label>
+        <label class="switch"><span>Figur liegt falsch herum<br><span class="muted small">Wenn sie auf dem Rücken liegt oder kopfsteht</span></span><input type="checkbox" id="fg-axis"></label>
+      </div>
+      <div id="fg-c-photo">
+        <label class="field"><span>Hintergrund entfernen: <b id="fg-tol-v">30</b></span><input type="range" id="fg-tol" min="5" max="100" value="30"></label>
+        <p class="small muted" style="margin:-4px 0 0">Bleibt Hintergrund stehen: weiter nach rechts. Fehlen Teile der Figur: nach links.</p>
+      </div>
     </div>
     <div class="actions">${has ? `<button class="btn danger" id="fg-del" style="margin-right:auto">Entfernen</button>` : ""}<button class="btn" data-x="0">Abbrechen</button><button class="btn primary" id="fg-save" disabled>Speichern</button></div>`);
   $$("[data-x]", dialog).forEach((b) => b.onclick = closeDialog);
   const msg = (t) => $("#fg-msg").textContent = t;
-  let timer;
+  const M = () => window.KlangkisteModel;
+  const make = (size) => st.kind === "photo" ? M().cutPhoto(st.photo, st.tol, size) : M().render(st.model, { ...st, zUp: st.zUp ?? st.model.zUp, size });
   const draw = (size = 300) => {
-    const out = KlangkisteSTL.render(st.tris, { ...st, size });
+    const out = make(size);
     const cv = $("#fg-canvas"); cv.width = out.width; cv.height = out.height; cv.getContext("2d").drawImage(out, 0, 0);
     return out;
   };
+  let timer;
   const redraw = () => { clearTimeout(timer); timer = setTimeout(() => { try { draw(); } catch (e) { msg(e.message); } }, 60); };
   const markColor = () => $$(".fg-sw").forEach((b) => b.classList.toggle("on", b.dataset.c === st.color));
-  $("#fg-file").onchange = run(async (e) => {
-    const file = e.target.files[0]; if (!file) return;
-    if (file.size > 80e6) throw new Error("Die Datei ist zu groß (über 80 MB)");
-    msg("Lese die Datei …");
-    await loadScript("/static/stl.js");
-    const buf = await file.arrayBuffer();
-    st.tris = KlangkisteSTL.parse(buf);
-    const n = st.tris.length / 9;
+  const show = () => {
     $("#fg-stage").hidden = false; $("#fg-ctl").hidden = false; $("#fg-save").disabled = false;
+    $("#fg-c-model").hidden = st.kind !== "model"; $("#fg-c-photo").hidden = st.kind !== "photo";
+    if (st.kind === "model") {
+      $("#fg-orig-row").hidden = !st.model.colored;
+      $("#fg-colrow").hidden = st.model.colored && st.original;
+      $("#fg-axis").checked = false; st.zUp = null;
+    }
     $("#fg-color").value = st.color; markColor();
-    msg(`${n.toLocaleString("de-DE")} Dreiecke – so steht die Figur auf dem Cover:`);
-    await new Promise((r) => setTimeout(r, 30));
+  };
+  const busyMsg = async (t) => { msg(t); await new Promise((r) => setTimeout(r, 30)); };
+  $("#fg-file").onchange = run(async (e) => {
+    const files = [...e.target.files]; if (!files.length) return;
+    await busyMsg("Lese die Datei …");
+    await loadScript("/static/model.js");
+    st.model = await M().load(files); st.kind = "model"; st.photo = null;
+    const n = st.model.pos.length / 9;
+    show();
+    await busyMsg(`${n.toLocaleString("de-DE")} Dreiecke${st.model.colored ? (st.model.textures.length ? ", mit Textur" : ", mit Farben") : ""} – zeichne …`);
     draw();
+    msg(`${n.toLocaleString("de-DE")} Dreiecke${st.model.colored ? (st.model.textures.length ? ", mit Textur" : ", mit Farben") : ""} – so steht die Figur auf dem Cover:`);
+    e.target.value = "";
+  });
+  $("#fg-photo").onchange = run(async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    await busyMsg("Lese das Foto …");
+    await loadScript("/static/model.js");
+    st.photo = await M().loadPhoto(f); st.kind = "photo"; st.model = null;
+    show();
+    $("#fg-c-photo").hidden = st.photo.cutout;
+    draw();
+    msg(st.photo.cutout ? "Das Bild ist schon freigestellt." : "Hintergrund entfernt – so steht die Figur auf dem Cover:");
+    e.target.value = "";
   });
   $$(".fg-sw").forEach((b) => b.onclick = () => { st.color = b.dataset.c; $("#fg-color").value = st.color; markColor(); redraw(); });
   $("#fg-color").oninput = (e) => { st.color = e.target.value; markColor(); redraw(); };
+  $("#fg-orig").onchange = (e) => { st.original = e.target.checked; $("#fg-colrow").hidden = st.original; redraw(); };
   $("#fg-yaw").oninput = (e) => { st.yaw = +e.target.value; $("#fg-yaw-v").textContent = st.yaw; redraw(); };
   $("#fg-pitch").oninput = (e) => { st.pitch = +e.target.value; $("#fg-pitch-v").textContent = st.pitch; redraw(); };
-  $("#fg-axis").onchange = (e) => { st.zUp = !e.target.checked; redraw(); };
+  $("#fg-axis").onchange = (e) => { st.zUp = e.target.checked ? !st.model.zUp : null; redraw(); };
+  $("#fg-tol").oninput = (e) => { st.tol = +e.target.value; $("#fg-tol-v").textContent = st.tol; redraw(); };
   $("#fg-save").onclick = run(async (e) => {
-    e.currentTarget.disabled = true; msg("Zeichne die Figur …");
-    await new Promise((r) => setTimeout(r, 30));
-    const out = draw(560);
+    const btn = e.currentTarget; btn.disabled = true;
+    await busyMsg("Zeichne die Figur …");
+    const out = make(560);
     const blob = await new Promise((r) => out.toBlob(r, "image/png"));
     const r = await fetch("/api/figure?folder=" + encodeURIComponent(folder), { method: "POST", headers: { "Content-Type": "image/png" }, body: blob });
-    if (!r.ok) { e.currentTarget.disabled = false; throw new Error((await r.json().catch(() => ({}))).error || "Speichern fehlgeschlagen"); }
+    if (!r.ok) { btn.disabled = false; throw new Error((await r.json().catch(() => ({}))).error || "Speichern fehlgeschlagen"); }
     try { localStorage.setItem("kk-figcolor", st.color); } catch (err) {}
     closeDialog(); toast("Figur gespeichert"); after && after();
   });
@@ -372,7 +407,7 @@ const viewFolder = run(async () => {
   const meta = [subs.length ? `${subs.length} ${music ? "Unterordner" : subs.length === 1 ? "Folge" : "Folgen"}` : "", `${f.total_tracks} Titel`, tracks.length ? size(total) : ""].filter(Boolean).join(" · ");
   main.innerHTML = `<nav class="crumbs">${ICON.back}${crumbs}</nav>
     <div class="detail-head"><div><div class="figwrap${f.figure_v ? " has-fig" : ""}">${cover(name, true, "&v=" + f.cover_v)}${figImg(figUrl(name, f.figure_v))}</div>
-        <div class="row cvrow"><button class="btn small" id="cv">${ICON.camera} Titelbild</button>${f.custom_cover ? `<button class="iconbtn" id="cvdel" aria-label="Titelbild entfernen" title="Titelbild entfernen" style="width:36px;height:36px">${ICON.trash}</button>` : ""}<button class="btn small" id="fig">${FIGICON} ${f.figure_v ? "Figur" : "3D-Figur"}</button></div></div>
+        <div class="row cvrow"><button class="btn small" id="cv">${ICON.camera} Titelbild</button>${f.custom_cover ? `<button class="iconbtn" id="cvdel" aria-label="Titelbild entfernen" title="Titelbild entfernen" style="width:36px;height:36px">${ICON.trash}</button>` : ""}<button class="btn small" id="fig">${FIGICON} Figur</button></div></div>
       <div><h1 style="overflow-wrap:anywhere">${esc(leaf(name))}</h1><p class="muted">${meta} ${f.cards.length ? `<span class="pill accent">${f.cards.length === 1 ? "Karte zugewiesen" : f.cards.length + " Karten"}</span>` : ""}</p>
       <div class="row wrap"><button class="btn primary" id="play" ${f.total_tracks ? "" : "disabled"}>${ICON.play.replace("<svg", '<svg class="icon" style="fill:currentColor;stroke:none"')} ${subs.length ? "Alles abspielen" : "Abspielen"}</button>
       <button class="btn" id="assign">${ICON.card} Karte zuweisen</button>
