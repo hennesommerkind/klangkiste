@@ -518,6 +518,7 @@ const viewSettings = run(async () => {
     <div class="row wrap"><button class="btn" id="k-save">Speichern</button><button class="btn" id="k-test">Verbindung testen</button><button class="btn primary" id="k-run">Jetzt sichern</button><button class="btn" id="k-restore">Wiederherstellen …</button></div>
     <h2 style="margin-top:22px">Ohne HiDrive</h2><p class="muted small">Einstellungen und Karten (ohne Musik) als Datei auf dieses Gerät laden oder von dort zurückspielen.</p>
     <div class="row wrap"><a class="btn" href="/api/backup/download" download>Herunterladen</a><button class="btn" id="k-up">Datei zurückspielen</button><input type="file" id="k-file" accept=".gz,.tar,.tgz" hidden></div>`)}
+  ${sec("app", "Als App installieren", `<div id="app-inst"></div>`)}
   ${sec("system", "System", `<ul class="list">
       <li style="display:block"><div class="row"><div class="grow"><b>Software</b><span>Version ${esc(sys.version)}${sys.revision ? " · Stand " + esc(sys.revision) : ""}${sys.revision_date ? " vom " + esc(sys.revision_date) : ""}${sys.mock ? " · Simulationsmodus" : ""}</span></div></div><div id="upd"></div></li>
       <li><div class="grow"><b>Adresse</b><span>http://${esc(sys.ip || sys.hostname)} · ${esc(sys.hostname)}</span></div></li>
@@ -560,6 +561,7 @@ const viewSettings = run(async () => {
   api("/api/bluetooth").then(paintBT).catch(() => {});
   api("/api/network").then((n) => paintWifi(n, cfg)).catch(() => {});
   api("/api/share").then(paintShare).catch(() => {});
+  paintInstall();
 
   // Haus
   fetch("/api/homeassistant").then((r) => r.text()).then((t) => { if ($("#h-ha")) $("#h-ha").textContent = t; });
@@ -607,6 +609,46 @@ function storageCard(st) {
     <div class="segbar" role="img" aria-label="Speicher: ${esc(desc)}">${parts.filter(([, , v]) => v > 0).map(([k, n, v]) => `<span class="seg-${k}" style="flex-grow:${v}" title="${n}: ${size(v)} (${share(v)})"></span>`).join("")}</div>
     <ul class="legend">${parts.map(([k, n, v]) => `<li><i class="sw seg-${k}"></i><span>${n}</span><b>${size(v)}</b></li>`).join("")}</ul></div>`;
 }
+function paintInstall() {
+  const el = $("#app-inst"); if (!el) return;
+  const ua = navigator.userAgent, ios = /iPhone|iPad|iPod/.test(ua) || (ua.includes("Mac") && navigator.maxTouchPoints > 1);
+  const android = /Android/.test(ua), origin = location.origin;
+  if (matchMedia("(display-mode: standalone)").matches || navigator.standalone) {
+    el.innerHTML = `<p><span class="pill ok">Läuft als App</span></p><p class="small muted">Die Klangkiste ist auf diesem Gerät installiert.</p>`; return;
+  }
+  if (S.installPrompt) {
+    el.innerHTML = `<p>Die Klangkiste als eigene App auf dem Startbildschirm – ohne Adresszeile, mit eigenem Symbol.</p>
+      <div class="actions row"><button class="btn primary" id="app-go">${ICON.plus} Jetzt installieren</button></div>`;
+    $("#app-go").onclick = run(async () => { const p = S.installPrompt; S.installPrompt = null; await p.prompt(); await p.userChoice; paintInstall(); });
+    return;
+  }
+  if (ios) {
+    el.innerHTML = `<p>In <b>Safari</b> unten auf <b>Teilen</b> tippen (Quadrat mit Pfeil), dann <b>„Zum Home-Bildschirm“</b>. Die Klangkiste öffnet sich danach wie eine eigene App.</p>
+      <p class="small muted">Geht nur in Safari, nicht in Chrome oder anderen Browsern auf dem iPhone.</p>`; return;
+  }
+  if (!window.isSecureContext) {
+    el.innerHTML = `<p>Chrome bietet die Installation nur für verschlüsselte Seiten (https) an. Die Box ist aber nur über http erreichbar. Mit einer Einstellung in Chrome geht es trotzdem – einmalig pro Gerät:</p>
+      <ol class="small" style="padding-left:20px;line-height:1.7;margin:0 0 10px">
+        <li>In Chrome diese Adresse öffnen (kopieren und in die Adresszeile einfügen):<pre>chrome://flags/#unsafely-treat-insecure-origin-as-secure</pre></li>
+        <li>In das Textfeld diese Adresse eintragen:<pre id="app-origin">${esc(origin)}</pre></li>
+        <li>Rechts auf <b>„Enabled“</b> stellen und unten auf <b>„Relaunch“</b> tippen.</li>
+        <li>Diese Seite neu öffnen – hier erscheint dann „Jetzt installieren“${android ? ", alternativ im Chrome-Menü (⋮) „App installieren“" : ""}.</li></ol>
+      <div class="row wrap"><button class="btn small" id="app-c1">Chrome-Adresse kopieren</button><button class="btn small" id="app-c2">Box-Adresse kopieren</button></div>
+      <p class="small muted" style="margin-top:10px">Die Einstellung gilt nur für die Adresse der Box. Ändert sich deren Adresse, muss sie neu eingetragen werden – deshalb in der Fritz!Box eine feste Adresse für die Klangkiste vergeben. Ohne die Einstellung legt „Zum Startbildschirm hinzufügen“ im Chrome-Menü nur ein Lesezeichen an, das im Browser öffnet.</p>`;
+    // Über http gibt es navigator.clipboard nicht – dann der alte Weg über ein Textfeld
+    const copy = (t) => () => {
+      const ta = document.createElement("textarea"); ta.value = t; ta.setAttribute("readonly", ""); ta.style.cssText = "position:fixed;opacity:0";
+      document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, t.length);
+      let ok = false; try { ok = document.execCommand("copy"); } catch (e) {}
+      ta.remove(); ok ? toast("Kopiert") : toast("Bitte von Hand markieren und kopieren", "error");
+    };
+    $("#app-c1").onclick = copy("chrome://flags/#unsafely-treat-insecure-origin-as-secure");
+    $("#app-c2").onclick = copy(origin);
+    return;
+  }
+  el.innerHTML = `<p>Im Browser-Menü <b>„App installieren“</b> bzw. <b>„Zum Startbildschirm hinzufügen“</b> wählen. Bietet der Browser das nicht an, die Seite einmal neu laden – manche Browser zeigen das Angebot erst beim zweiten Besuch.</p>`;
+}
+
 function paintShare(sh) {
   const el = $("#share"); if (!el) return;
   const sw = (id, label, on, hint) => `<label class="switch"><span>${label}<br><span class="muted small">${hint}</span></span><input type="checkbox" id="${id}" ${on ? "checked" : ""}></label>`;
@@ -750,4 +792,7 @@ function paintBackup() {
   render(); connect();
   // Service Worker geht nur über HTTPS (oder wenn der Browser die Adresse als sicher einstuft)
   if ("serviceWorker" in navigator && window.isSecureContext) navigator.serviceWorker.register("/sw.js").catch(() => {});
+  // Installations-Angebot des Browsers (Chrome/Edge) merken, statt es sofort zu zeigen
+  window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); S.installPrompt = e; if ($("#app-inst")) paintInstall(); });
+  window.addEventListener("appinstalled", () => { S.installPrompt = null; toast("Klangkiste ist jetzt als App installiert"); if ($("#app-inst")) paintInstall(); });
 })();
