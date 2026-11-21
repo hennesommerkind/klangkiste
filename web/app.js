@@ -339,6 +339,70 @@ const viewMusic = run(async () => {
 
 // Suche: Ordner sofort im Browser, Titel auf der Box
 const norm = (t) => String(t).toLowerCase().replace(/ß/g, "ss").normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
+
+// Ordnerauswahl mit Suche statt langer Aufklappliste (Karten zuweisen, Verschieben).
+// folders: Liste der Ordnerpfade; extra: zusätzlich wählbare Einträge (z. B. die Bereiche selbst)
+function folderPicker(folders, selected, extra = []) {
+  const all = [...extra, ...folders];
+  const kids = (p) => folders.filter((f) => f.startsWith(p + "/") && !f.slice(p.length + 1).includes("/"));
+  const open = new Set();
+  if (selected) { const parts = selected.split("/"); for (let k = 1; k < parts.length; k++) open.add(parts.slice(0, k).join("/")); }
+  const html = `<div class="picker">
+    <div class="search picker-q"><input type="search" placeholder="Suchen …" autocomplete="off" aria-label="Ordner suchen"></div>
+    <div class="picker-list" role="listbox"></div>
+    <div class="picker-sel small muted"></div></div>`;
+  return {
+    html,
+    value: () => selected,
+    mount(root, onChange) {
+      const list = $(".picker-list", root), q = $(".picker-q input", root), sel = $(".picker-sel", root);
+      const row = (f, depth, toggle) => {
+        const name = CATS.includes(f) ? f : f.split("/").pop();
+        const sub = kids(f).length;
+        return `<div class="picker-row${f === selected ? " on" : ""}" role="option" aria-selected="${f === selected}" data-v="${esc(f)}" style="--d:${depth}">
+          ${toggle && sub ? `<button class="picker-tg" data-t="${esc(f)}" aria-label="${open.has(f) ? "Zuklappen" : "Aufklappen"}">${open.has(f) ? "▾" : "▸"}</button>` : `<span class="picker-tg"></span>`}
+          <span class="picker-name">${esc(name)}</span>${sub && toggle ? `<span class="picker-n">${sub}</span>` : ""}</div>`;
+      };
+      const paint = () => {
+        const terms = norm(q.value.trim()).split(/\s+/).filter(Boolean);
+        let out = "";
+        if (terms.length) {
+          // Jedes Wort muss vorkommen, egal wo – „drache 3“ findet „Der kleine Drache Kokosnuss 3“
+          const depth = (f) => f.split("/").length;
+          const hits = all.filter((f) => { const n = norm(f); return terms.every((t) => n.includes(t)); })
+            .sort((a, b) => depth(a) - depth(b) || a.localeCompare(b, "de", { numeric: true })).slice(0, 80);
+          const short = (f) => { const c = catOf(f); return c && f !== c ? pretty(f.slice(c.length + 1)) : f; };
+          out = hits.map((f) => `<div class="picker-row${f === selected ? " on" : ""}" role="option" data-v="${esc(f)}" style="--d:0"><span class="picker-tg"></span><span class="picker-name">${esc(short(f))}${catOf(f) && f !== catOf(f) ? ` <span class="picker-n">${catOf(f)}</span>` : ""}</span></div>`).join("")
+            || `<p class="small muted" style="padding:10px">Nichts gefunden.</p>`;
+        } else {
+          const walk = (p, depth) => kids(p).map((f) => row(f, depth, true) + (open.has(f) ? walk(f, depth + 1) : "")).join("");
+          for (const c of CATS) {
+            const inCat = kids(c);
+            if (!inCat.length && !extra.includes(c)) continue;
+            out += extra.includes(c) ? row(c, 0, false).replace('class="picker-row', 'class="picker-row cat') : `<div class="picker-head">${c}</div>`;
+            out += walk(c, extra.includes(c) ? 1 : 0);
+          }
+          const loose = folders.filter((f) => !catOf(f) && !f.includes("/"));
+          out += loose.map((f) => row(f, 0, true) + (open.has(f) ? walk(f, 1) : "")).join("");
+          if (!out) out = `<p class="small muted" style="padding:10px">Noch keine Ordner.</p>`;
+        }
+        list.innerHTML = out;
+        sel.textContent = selected ? "Gewählt: " + pretty(selected) : "Noch nichts gewählt";
+      };
+      list.onclick = (e) => {
+        const t = e.target.closest("[data-t]");
+        if (t) { const v = t.dataset.t; open.has(v) ? open.delete(v) : open.add(v); paint(); return; }
+        const r = e.target.closest("[data-v]"); if (!r) return;
+        selected = r.dataset.v; paint(); onChange && onChange(selected);
+      };
+      q.oninput = () => { paint(); list.scrollTop = 0; };
+      paint();
+      const on = $(".picker-row.on", list); if (on) on.scrollIntoView({ block: "center" });
+      // Auf dem Handy nicht gleich die Tastatur aufklappen – sie würde die Liste verdecken
+      if (matchMedia("(pointer: coarse)").matches) setTimeout(() => { if (document.activeElement === q) q.blur(); }, 0);
+    },
+  };
+}
 let searchSeq = 0;
 function searchLib(folders, cat, text) {
   (S.q ||= {})[cat] = text;
@@ -432,12 +496,14 @@ const viewFolder = run(async () => {
   $("#ren").onclick = run(async () => { const n = await prompt2("Umbenennen", "Neuer Name", leaf(name)); if (n && n !== leaf(name)) { const r = await api("/api/library/rename", { folder: name, name: n }); goFolder(r.name); } });
   $("#mv").onclick = run(async () => {
     const targets = [...CATS, ...lib.folders.map((x) => x.name)].filter((t) => t !== name && !t.startsWith(name + "/") && t !== parts.slice(0, -1).join("/"));
+    const pick = folderPicker(targets.filter((t) => !CATS.includes(t)), null, CATS.filter((c) => targets.includes(c)));
     openDialog(`<h2>Verschieben</h2><p class="muted">„${esc(leaf(name))}“ verschieben nach …</p>
-      <label class="field"><span>Ziel</span><select id="mvt">${targets.map((t) => `<option value="${esc(t)}">${esc(pretty(t))}</option>`).join("")}</select></label>
+      <div class="field" id="mvf"><span>Ziel</span>${pick.html}</div>
       <p class="muted small">So machst du aus einzelnen Hörspielen eine Serie: Serie anlegen, dann die Folgen hineinschieben. Zugewiesene Karten bleiben gültig.</p>
       <div class="actions"><button class="btn" id="mvc">Abbrechen</button><button class="btn primary" id="mvo">Verschieben</button></div>`);
+    pick.mount($("#mvf", dialog));
     $("#mvc", dialog).onclick = closeDialog;
-    $("#mvo", dialog).onclick = run(async () => { const r = await api("/api/library/move", { folder: name, parent: $("#mvt", dialog).value }); closeDialog(); toast("Verschoben"); goFolder(r.name); });
+    $("#mvo", dialog).onclick = run(async () => { if (!pick.value()) throw new Error("Bitte ein Ziel auswählen"); const r = await api("/api/library/move", { folder: name, parent: pick.value() }); closeDialog(); toast("Verschoben"); goFolder(r.name); });
   });
   $("#del").onclick = run(async () => { if (await ask("Ordner löschen?", `„${leaf(name)}“ mit ${f.total_tracks} Titeln${subs.length ? ` und ${subs.length} ${subWord}` : ""} wird endgültig gelöscht. Zugewiesene Karten werden frei.`, "Löschen", true)) { await api("/api/library/delete", { folder: name }); toast("Ordner gelöscht"); goUp(name); } });
   $$("[data-del]").forEach((b) => b.onclick = run(async () => { const t = tracks[b.dataset.del]; if (await ask("Titel löschen?", t.file, "Löschen", true)) { await api("/api/library/delete", { folder: name, file: t.file }); viewFolder(); } }));
@@ -512,23 +578,25 @@ const CMD = { play_pause: "Play / Pause", next: "Nächster Titel", prev: "Vorher
 const cardDialog = run(async (id = null, card = null) => {
   const lib = await api("/api/library");
   const t = card?.type || "folder";
+  const pick = folderPicker(lib.folders.map((f) => f.name), t === "folder" ? card?.target : null);
   openDialog(`<h2>${card ? "Karte bearbeiten" : "Neue Karte"}</h2>
     <label class="field"><span>Was soll die Karte tun?</span><select id="ct"><option value="folder">Ordner abspielen</option><option value="url">Radio / Stream abspielen</option><option value="command">Befehl ausführen</option></select></label>
-    <label class="field" id="f-folder"><span>Ordner</span><select id="cfolder">${CATS.map((c) => { const fs = lib.folders.filter((f) => catOf(f.name) === c); return fs.length ? `<optgroup label="${c}">${fs.map((f) => `<option value="${esc(f.name)}">${esc(pretty(f.name.slice(c.length + 1)))}</option>`).join("")}</optgroup>` : ""; }).join("")}${lib.folders.filter((f) => !catOf(f.name)).map((f) => `<option value="${esc(f.name)}">${esc(pretty(f.name))}</option>`).join("")}</select></label>
+    <div class="field" id="f-folder"><span>Ordner</span>${pick.html}</div>
     <label class="switch" id="f-shuffle"><span>Zufällige Reihenfolge</span><input type="checkbox" id="cshuffle"></label>
     <label class="field" id="f-url"><span>Adresse des Streams</span><input type="url" id="curl" placeholder="https://…"></label>
     <label class="field" id="f-url2"><span>Name</span><input type="text" id="clabel" placeholder="z. B. Kinderradio"></label>
     <label class="field" id="f-cmd"><span>Befehl</span><select id="ccmd">${Object.entries(CMD).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select></label>
     <div class="actions"><button class="btn" id="cc">Abbrechen</button><button class="btn primary" id="cs">${card ? "Speichern" : id ? "Zuweisen" : "Weiter"}</button></div>`);
   const ct = $("#ct", dialog); ct.value = t;
-  if (card) { if (t === "folder") $("#cfolder", dialog).value = card.target; if (t === "url") $("#curl", dialog).value = card.target; if (t === "command") $("#ccmd", dialog).value = card.target; $("#cshuffle", dialog).checked = !!card.shuffle; $("#clabel", dialog).value = card.label || ""; }
+  pick.mount($("#f-folder", dialog));
+  if (card) { if (t === "url") $("#curl", dialog).value = card.target; if (t === "command") $("#ccmd", dialog).value = card.target; $("#cshuffle", dialog).checked = !!card.shuffle; $("#clabel", dialog).value = card.label || ""; }
   const show = () => { const v = ct.value; $("#f-folder", dialog).hidden = $("#f-shuffle", dialog).hidden = v !== "folder"; $("#f-url", dialog).hidden = $("#f-url2", dialog).hidden = v !== "url"; $("#f-cmd", dialog).hidden = v !== "command"; };
   ct.onchange = show; show();
   $("#cc", dialog).onclick = closeDialog;
   $("#cs", dialog).onclick = run(async () => {
-    const v = ct.value, spec = { type: v, target: v === "folder" ? $("#cfolder", dialog).value : v === "url" ? $("#curl", dialog).value.trim() : $("#ccmd", dialog).value, shuffle: $("#cshuffle", dialog).checked };
+    const v = ct.value, spec = { type: v, target: v === "folder" ? pick.value() : v === "url" ? $("#curl", dialog).value.trim() : $("#ccmd", dialog).value, shuffle: $("#cshuffle", dialog).checked };
     if (v === "url") spec.label = $("#clabel", dialog).value.trim(); if (v === "command") spec.label = CMD[spec.target];
-    if (!spec.target) throw new Error(v === "folder" ? "Bitte erst einen Ordner anlegen" : "Bitte eine Adresse eintragen");
+    if (!spec.target) throw new Error(v === "folder" ? (lib.folders.length ? "Bitte einen Ordner auswählen" : "Bitte erst einen Ordner anlegen") : "Bitte eine Adresse eintragen");
     if (card) { await api("/api/cards/update", { id, ...spec }); closeDialog(); toast("Gespeichert"); viewCards(); }
     else if (id) { await api("/api/cards/learn", { id, ...spec }); closeDialog(); toast("Karte gespeichert"); if (S.view === "cards") viewCards(); }
     else { closeDialog(); learnCard(spec); }
