@@ -10,7 +10,7 @@ import os
 import re
 import time
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 
 from aiohttp import web
 
@@ -186,7 +186,12 @@ class Box:
         s = dict(self.player.state)
         s.update({"card": self.active_card, "spotify": False, "cover_url": None,
                   "controller": self.controller, "name": self.store.config["name"],
-                  "update": bool(self.update_info.get("available")), "vmax": self.player.vmax()})
+                  "update": bool(self.update_info.get("available")), "vmax": self.player.vmax(),
+                  "figure": None})
+        if s.get("folder") and self.controller != "spotify":
+            fig, v = self.library.figure_for(s["folder"])
+            if fig:
+                s["figure"] = f"/api/figure?folder={quote(fig)}&v={v}"
         if self.controller == "spotify":
             sp = self.spotify.info()
             s.update({"headphones": self.bluetooth.connected,
@@ -740,6 +745,33 @@ async def api_cover_set(request):
     return ok()
 
 
+@routes.get("/api/figure")
+async def api_figure(request):
+    f = await asyncio.to_thread(box(request).library.figure_file, request.query["folder"])
+    if f is None:
+        raise web.HTTPNotFound()
+    return web.FileResponse(f, headers={"Content-Type": "image/png", "Cache-Control": "max-age=86400"})
+
+
+@routes.post("/api/figure")
+async def api_figure_set(request):
+    data = await request.read()
+    if len(data) > 4_000_000:
+        raise ValueError("Das Bild der Figur ist zu groß")
+    b = box(request)
+    await asyncio.to_thread(b.library.set_figure, request.query["folder"], data)
+    b.emit("state", b.full_state())
+    return ok()
+
+
+@routes.delete("/api/figure")
+async def api_figure_delete(request):
+    b = box(request)
+    await asyncio.to_thread(b.library.remove_figure, request.query["folder"])
+    b.emit("state", b.full_state())
+    return ok()
+
+
 # ---------- Karten ----------
 def _card_spec(d):
     t = d.get("type", "folder")
@@ -768,7 +800,9 @@ async def api_cards(request):
     for c in cards:
         if c.get("type", "folder") == "folder":
             try:
-                c["missing"] = not b.library.path(c["target"]).is_dir()
+                d = b.library.path(c["target"])
+                c["missing"] = not d.is_dir()
+                c["figure_v"] = 0 if c["missing"] else b.library._figure_v(d)
             except LibraryError:
                 c["missing"] = True
     cards.sort(key=lambda c: (c.get("type", "folder"), str(c.get("target", "")).lower()))

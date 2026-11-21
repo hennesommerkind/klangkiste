@@ -83,6 +83,14 @@ Befehle an `klangkiste/cmd/…`: `play_pause`, `play`, `pause`, `next`, `prev`, 
 `vol_up`, `vol_down`, `volume` (0–100), `stream` (ON/OFF), `play_folder` (Ordnername),
 `play_url` (Adresse), `shutdown`.
 
+## 3D-Figuren über dem Cover
+
+Zu jedem Ordner lässt sich die STL-Datei der gebastelten Figur hochladen (Ordneransicht › „3D-Figur“
+oder Karten › Figur-Symbol). Der Browser zeichnet sie einmal (`web/stl.js`, ohne Bibliothek), Farbe,
+Drehung und Blickwinkel sind einstellbar; gespeichert wird nur ein PNG als `.figur.png` im Ordner – es
+wandert beim Verschieben mit und wird mit der Musik gesichert. Die Figur steht halb über dem Cover in der
+Übersicht, in der Ordneransicht, bei „Läuft“ und in der Kartenliste; Folgen zeigen die Figur ihrer Serie.
+
 ## Android-App
 
 Im Ordner `android/` liegt eine schlanke App (WebView-Hülle um die Weboberfläche). Sie findet die Box

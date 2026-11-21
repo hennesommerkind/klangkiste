@@ -9,6 +9,7 @@ from pathlib import Path
 AUDIO = {".mp3", ".m4a", ".m4b", ".aac", ".ogg", ".oga", ".opus", ".flac", ".wav", ".wma"}
 IMAGES = {".jpg", ".jpeg", ".png", ".webp"}
 COVER_NAMES = ("cover", "folder", "front", "album")
+FIGURE = ".figur.png"   # versteckt: taucht weder als Titelbild noch als Titel auf
 CATEGORIES = ("Hörspiele", "Musik")
 ORDER_FILE = ".reihenfolge.json"   # eigene Reihenfolge pro Ordner; wandert mit Sicherung und Umbenennen mit
 
@@ -113,7 +114,7 @@ class Library:
             self._write_order(d, data)
 
     def find_cover(self, d):
-        imgs = [f for f in d.iterdir() if f.is_file() and f.suffix.lower() in IMAGES]
+        imgs = [f for f in d.iterdir() if f.is_file() and f.suffix.lower() in IMAGES and not f.name.startswith(".")]
         if not imgs:
             return None
         imgs.sort(key=lambda f: (f.stem.lower() not in COVER_NAMES, f.name.lower()))
@@ -137,6 +138,7 @@ class Library:
                         "cover": True,
                         "cover_v": int(img.stat().st_mtime) if img else 0,
                         "custom_cover": bool(img and img.stem.lower() == "cover"),
+                        "figure_v": self._figure_v(sub),
                         "subfolders": sum(1 for y in sub.iterdir() if y.is_dir() and not y.name.startswith(".")),
                     })
                 walk(sub)
@@ -311,6 +313,48 @@ class Library:
             if f.is_file() and f.stem.lower() == "cover" and f.suffix.lower() in IMAGES:
                 f.unlink()
         (d / f"cover{suffix}").write_bytes(data)
+
+    # ---------- 3D-Figur (aus einer STL im Browser gerendert, als PNG gespeichert) ----------
+    @staticmethod
+    def _figure_v(d):
+        f = d / FIGURE
+        try:
+            return int(f.stat().st_mtime_ns // 1_000_000)
+        except OSError:
+            return 0
+
+    def figure_file(self, folder):
+        f = self.path(folder) / FIGURE
+        return f if f.is_file() else None
+
+    def figure_for(self, folder):
+        """Figur des Ordners oder des nächsten übergeordneten (eine Folge zeigt die Figur der Serie)."""
+        if not folder:
+            return None, 0
+        parts = str(folder).split("/")
+        while len(parts) > 1:
+            rel = "/".join(parts)
+            try:
+                v = self._figure_v(self.path(rel))
+            except LibraryError:
+                v = 0
+            if v:
+                return rel, v
+            parts.pop()
+        return None, 0
+
+    def set_figure(self, folder, data):
+        if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise LibraryError("Die Figur muss als PNG ankommen")
+        d = self.path(folder)
+        if d == self.root or self.is_category(folder):
+            raise LibraryError("Ordner nicht gefunden")
+        tmp = d / (FIGURE + ".part")
+        tmp.write_bytes(data)
+        os.replace(tmp, d / FIGURE)
+
+    def remove_figure(self, folder):
+        (self.path(folder) / FIGURE).unlink(missing_ok=True)
 
     def search_tracks(self, query, category=None, limit=60):
         """Titel, deren Name alle Suchwörter enthält (Ordnerpfad zählt mit)."""

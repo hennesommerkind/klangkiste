@@ -59,6 +59,9 @@ function cover(folder, hasImg = true, v = "") {
   return `<div class="cover" style="--c:${color(folder)}">${esc(initials(folder))}${img}</div>`;
 }
 const leaf = (f) => String(f || "").split("/").pop();
+// 3D-Figur, die halb über dem Cover steht (PNG mit durchsichtigem Hintergrund)
+const figUrl = (folder, v) => v ? `/api/figure?folder=${encodeURIComponent(folder)}&v=${v}` : "";
+const figImg = (url) => url ? `<img class="fig" alt="" src="${esc(url)}" onerror="this.remove()">` : "";
 const act = (action, value) => run(() => api("/api/player", { action, value }))();
 
 function openDialog(html) { dialog.innerHTML = html; if (!dialog.open) dialog.showModal(); return dialog; }
@@ -98,7 +101,7 @@ function onState(s) {
   $("#brand-name").textContent = s.name || "Klangkiste"; document.title = s.name || "Klangkiste";
   const key = [s.folder, s.url, s.tracks].join("|");
   if (key !== S.queueKey) { S.queueKey = key; loadQueue(); }
-  if (S.view === "now") { if (prev.folder !== s.folder || prev.controller !== s.controller || prev.cover_url !== s.cover_url || prev.state === "offline" || s.state === "offline" || !$(".now")) viewNow(); else updateNow(); }
+  if (S.view === "now") { if (prev.folder !== s.folder || prev.controller !== s.controller || prev.cover_url !== s.cover_url || prev.figure !== s.figure || prev.state === "offline" || s.state === "offline" || !$(".now")) viewNow(); else updateNow(); }
   renderMini(); updateDot();
 }
 async function loadQueue() { try { S.queue = await api("/api/queue"); } catch { S.queue = []; } if (S.view === "now") renderQueue(); }
@@ -122,7 +125,75 @@ setInterval(run(async () => { if (!document.hidden && S.state.state === "play") 
 function updateDot() { $('#nav button[data-view="settings"]').classList.toggle("dot", !!S.state.update); }
 function nowCover(s, idle) {
   if (s.spotify) return `<div class="cover spotify">${s.cover_url ? `<img alt="" src="${esc(s.cover_url)}" onerror="this.remove()">` : ""}<svg viewBox="0 0 24 24" width="38%" fill="currentColor"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm4.6 14.4a.6.6 0 0 1-.9.2c-2.4-1.5-5.4-1.8-9-1a.6.6 0 1 1-.3-1.2c3.9-.9 7.2-.5 9.9 1.1.3.2.4.6.3.9Zm1.2-2.7a.8.8 0 0 1-1 .3c-2.8-1.7-7-2.2-10.3-1.2a.8.8 0 1 1-.4-1.5c3.8-1.1 8.4-.6 11.5 1.3.3.2.4.7.2 1.1Zm.1-2.8C14.6 9 9.2 8.8 6.1 9.7a.9.9 0 1 1-.5-1.8c3.6-1.1 9.5-.9 13.3 1.3a.9.9 0 0 1-1 1.7Z"/></svg></div>`;
-  return cover(idle ? null : s.folder ?? "Radio", s.folder != null);
+  return `<div class="figwrap${s.figure && !idle ? " has-fig" : ""}">${cover(idle ? null : s.folder ?? "Radio", s.folder != null)}${idle ? "" : figImg(s.figure)}</div>`;
+}
+
+// ---------- 3D-Figur aus einer STL-Datei ----------
+const FIGICON = `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2.6"/><path d="M8.5 21l1-7.5L7 11l2.2-2.6h5.6L17 11l-2.5 2.5 1 7.5"/><path d="M6 21h12"/></svg>`;
+function loadScript(src) {
+  return new Promise((res, rej) => {
+    if (document.querySelector(`script[src="${src}"]`) && window.KlangkisteSTL) return res();
+    const s = document.createElement("script"); s.src = src; s.onload = res; s.onerror = () => rej(new Error("Konnte den Figuren-Zeichner nicht laden")); document.head.appendChild(s);
+  });
+}
+function figureDialog(folder, has, after) {
+  const COLORS = ["#e8dfd0", "#d9b38c", "#9c6b45", "#5b6b73", "#2f3a3d", "#c94f3d", "#e0a33a", "#4f8f5b", "#3d74b8", "#a46bb8"];
+  const st = { tris: null, color: localStorage.getItem("kk-figcolor") || COLORS[0], yaw: -25, pitch: 12, zUp: true };
+  openDialog(`<h2>3D-Figur für „${esc(leaf(folder))}“</h2>
+    <p class="small muted" style="margin-top:-4px">Wähle die STL-Datei der Figur, mit der du diese Karte gebastelt hast. Die Box zeigt sie dann halb über dem Cover – in der Übersicht, in der Ordneransicht und bei „Läuft“.</p>
+    <label class="btn" style="width:100%;justify-content:center">${FIGICON} STL-Datei wählen<input type="file" id="fg-file" hidden></label>
+    <div id="fg-stage" class="fg-stage" hidden><div class="figwrap has-fig fg-prev">${cover(folder, true)}<canvas id="fg-canvas"></canvas></div></div>
+    <p id="fg-msg" class="small muted" style="min-height:1.2em;margin:10px 0 0"></p>
+    <div id="fg-ctl" hidden>
+      <div class="field"><span>Farbe</span><div class="row wrap" id="fg-colors" style="gap:6px">${COLORS.map((c) => `<button class="fg-sw" data-c="${c}" style="background:${c}" aria-label="Farbe ${c}"></button>`).join("")}<input type="color" id="fg-color" aria-label="Eigene Farbe" style="width:34px;height:34px;padding:0;border:0;background:none"></div></div>
+      <label class="field"><span>Drehen: <b id="fg-yaw-v">-25</b>°</span><input type="range" id="fg-yaw" min="-180" max="180" value="-25"></label>
+      <label class="field"><span>Von oben: <b id="fg-pitch-v">12</b>°</span><input type="range" id="fg-pitch" min="-10" max="45" value="12"></label>
+      <label class="switch"><span>Figur liegt falsch herum<br><span class="muted small">Wenn sie auf dem Rücken liegt oder kopfsteht</span></span><input type="checkbox" id="fg-axis"></label>
+    </div>
+    <div class="actions">${has ? `<button class="btn danger" id="fg-del" style="margin-right:auto">Entfernen</button>` : ""}<button class="btn" data-x="0">Abbrechen</button><button class="btn primary" id="fg-save" disabled>Speichern</button></div>`);
+  $$("[data-x]", dialog).forEach((b) => b.onclick = closeDialog);
+  const msg = (t) => $("#fg-msg").textContent = t;
+  let timer;
+  const draw = (size = 300) => {
+    const out = KlangkisteSTL.render(st.tris, { ...st, size });
+    const cv = $("#fg-canvas"); cv.width = out.width; cv.height = out.height; cv.getContext("2d").drawImage(out, 0, 0);
+    return out;
+  };
+  const redraw = () => { clearTimeout(timer); timer = setTimeout(() => { try { draw(); } catch (e) { msg(e.message); } }, 60); };
+  const markColor = () => $$(".fg-sw").forEach((b) => b.classList.toggle("on", b.dataset.c === st.color));
+  $("#fg-file").onchange = run(async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    if (file.size > 80e6) throw new Error("Die Datei ist zu groß (über 80 MB)");
+    msg("Lese die Datei …");
+    await loadScript("/static/stl.js");
+    const buf = await file.arrayBuffer();
+    st.tris = KlangkisteSTL.parse(buf);
+    const n = st.tris.length / 9;
+    $("#fg-stage").hidden = false; $("#fg-ctl").hidden = false; $("#fg-save").disabled = false;
+    $("#fg-color").value = st.color; markColor();
+    msg(`${n.toLocaleString("de-DE")} Dreiecke – so steht die Figur auf dem Cover:`);
+    await new Promise((r) => setTimeout(r, 30));
+    draw();
+  });
+  $$(".fg-sw").forEach((b) => b.onclick = () => { st.color = b.dataset.c; $("#fg-color").value = st.color; markColor(); redraw(); });
+  $("#fg-color").oninput = (e) => { st.color = e.target.value; markColor(); redraw(); };
+  $("#fg-yaw").oninput = (e) => { st.yaw = +e.target.value; $("#fg-yaw-v").textContent = st.yaw; redraw(); };
+  $("#fg-pitch").oninput = (e) => { st.pitch = +e.target.value; $("#fg-pitch-v").textContent = st.pitch; redraw(); };
+  $("#fg-axis").onchange = (e) => { st.zUp = !e.target.checked; redraw(); };
+  $("#fg-save").onclick = run(async (e) => {
+    e.currentTarget.disabled = true; msg("Zeichne die Figur …");
+    await new Promise((r) => setTimeout(r, 30));
+    const out = draw(560);
+    const blob = await new Promise((r) => out.toBlob(r, "image/png"));
+    const r = await fetch("/api/figure?folder=" + encodeURIComponent(folder), { method: "POST", headers: { "Content-Type": "image/png" }, body: blob });
+    if (!r.ok) { e.currentTarget.disabled = false; throw new Error((await r.json().catch(() => ({}))).error || "Speichern fehlgeschlagen"); }
+    try { localStorage.setItem("kk-figcolor", st.color); } catch (err) {}
+    closeDialog(); toast("Figur gespeichert"); after && after();
+  });
+  if ($("#fg-del")) $("#fg-del").onclick = run(async () => {
+    await api("/api/figure?folder=" + encodeURIComponent(folder), undefined, "DELETE");
+    closeDialog(); toast("Figur entfernt"); after && after();
+  });
 }
 
 // ---------- Ansicht: Läuft ----------
@@ -201,7 +272,7 @@ const isMusic = (p) => catOf(p) === "Musik";
 const subLabel = (f) => f.subfolders ? `${f.subfolders} ${isMusic(f.name) ? (f.subfolders === 1 ? "Ordner" : "Ordner") : (f.subfolders === 1 ? "Folge" : "Folgen")}` : `${f.tracks} Titel`;
 function tiles(list) {
   return `<div class="folders">${list.map((f) => `<button class="folder" data-f="${esc(f.name)}">
-    <div style="position:relative">${cover(f.name, f.cover, "&v=" + f.cover_v)}${f.cards.length ? `<span class="badge">${ICON.card.replace('class="icon"', "")} Karte</span>` : ""}</div>
+    <div class="figwrap${f.figure_v ? " has-fig" : ""}">${cover(f.name, f.cover, "&v=" + f.cover_v)}${figImg(figUrl(f.name, f.figure_v))}${f.cards.length ? `<span class="badge">${ICON.card.replace('class="icon"', "")} Karte</span>` : ""}</div>
     <b>${esc(leaf(f.name))}</b><small>${subLabel(f)}</small></button>`).join("")}</div>`;
 }
 function bindTiles() { $$(".folder[data-f]").forEach((b) => b.onclick = () => goFolder(b.dataset.f)); }
@@ -300,8 +371,8 @@ const viewFolder = run(async () => {
   const subWord = music ? "Unterordner" : "Folgen";
   const meta = [subs.length ? `${subs.length} ${music ? "Unterordner" : subs.length === 1 ? "Folge" : "Folgen"}` : "", `${f.total_tracks} Titel`, tracks.length ? size(total) : ""].filter(Boolean).join(" · ");
   main.innerHTML = `<nav class="crumbs">${ICON.back}${crumbs}</nav>
-    <div class="detail-head"><div>${cover(name, true, "&v=" + f.cover_v)}
-        <div class="row cvrow"><button class="btn small" id="cv">${ICON.camera} Titelbild</button>${f.custom_cover ? `<button class="iconbtn" id="cvdel" aria-label="Titelbild entfernen" title="Titelbild entfernen" style="width:36px;height:36px">${ICON.trash}</button>` : ""}</div></div>
+    <div class="detail-head"><div><div class="figwrap${f.figure_v ? " has-fig" : ""}">${cover(name, true, "&v=" + f.cover_v)}${figImg(figUrl(name, f.figure_v))}</div>
+        <div class="row cvrow"><button class="btn small" id="cv">${ICON.camera} Titelbild</button>${f.custom_cover ? `<button class="iconbtn" id="cvdel" aria-label="Titelbild entfernen" title="Titelbild entfernen" style="width:36px;height:36px">${ICON.trash}</button>` : ""}<button class="btn small" id="fig">${FIGICON} ${f.figure_v ? "Figur" : "3D-Figur"}</button></div></div>
       <div><h1 style="overflow-wrap:anywhere">${esc(leaf(name))}</h1><p class="muted">${meta} ${f.cards.length ? `<span class="pill accent">${f.cards.length === 1 ? "Karte zugewiesen" : f.cards.length + " Karten"}</span>` : ""}</p>
       <div class="row wrap"><button class="btn primary" id="play" ${f.total_tracks ? "" : "disabled"}>${ICON.play.replace("<svg", '<svg class="icon" style="fill:currentColor;stroke:none"')} ${subs.length ? "Alles abspielen" : "Abspielen"}</button>
       <button class="btn" id="assign">${ICON.card} Karte zuweisen</button>
@@ -356,6 +427,7 @@ const viewFolder = run(async () => {
     if (!r.ok) throw new Error((await r.json()).error);
     toast("Titelbild gespeichert"); viewFolder();
   });
+  $("#fig").onclick = () => figureDialog(name, !!f.figure_v, viewFolder);
   if ($("#cvdel")) $("#cvdel").onclick = run(async () => { if (await ask("Titelbild entfernen?", "Danach wird – falls vorhanden – das Bild aus den Musikdateien angezeigt.", "Entfernen", true)) { await api("/api/cover?folder=" + encodeURIComponent(name), {}, "DELETE"); viewFolder(); } });
 });
 
@@ -435,13 +507,14 @@ const viewCards = run(async () => {
     ${d.reader_error ? `<div class="card"><b>${esc(d.reader_error)}</b></div>` : ""}
     ${d.cards.length > 5 ? `<div class="search"><input type="search" id="cq" placeholder="Karten durchsuchen …" autocomplete="off" aria-label="Karten suchen"></div>` : ""}
     <div class="card">${d.cards.length ? `<ul class="list">${d.cards.map((c, i) => `<li>
-      <div style="width:46px;flex:none">${c.type === "folder" || !c.type ? cover(c.target, !c.missing) : `<div class="cover" style="--c:var(--surface-2);color:var(--muted);font-size:1.2rem">${c.type === "url" ? "📻" : "⚙"}</div>`}</div>
+      <div style="width:46px;flex:none" class="figwrap${c.figure_v ? " has-fig mini" : ""}">${c.type === "folder" || !c.type ? cover(c.target, !c.missing) + figImg(figUrl(c.target, c.figure_v)) : `<div class="cover" style="--c:var(--surface-2);color:var(--muted);font-size:1.2rem">${c.type === "url" ? "📻" : "⚙"}</div>`}</div>
       <div class="grow"><b>${esc(label(c))}</b><span>Karte ${esc(c.id)}${c.shuffle ? " · Zufall" : ""} ${c.missing ? '<span class="pill bad">Ordner fehlt</span>' : ""}</span></div>
-      <button class="iconbtn" data-e="${i}" aria-label="Bearbeiten">${ICON.edit}</button><button class="iconbtn" data-d="${i}" aria-label="Karte löschen">${ICON.trash}</button></li>`).join("")}</ul>`
+      ${(c.type === "folder" || !c.type) && !c.missing ? `<button class="iconbtn" data-g="${i}" aria-label="3D-Figur" title="3D-Figur">${FIGICON}</button>` : ""}<button class="iconbtn" data-e="${i}" aria-label="Bearbeiten">${ICON.edit}</button><button class="iconbtn" data-d="${i}" aria-label="Karte löschen">${ICON.trash}</button></li>`).join("")}</ul>`
       : `<div class="empty" style="padding:24px">${ICON.music}<p>Noch keine Karten. Tippe auf „Neue Karte“ oder leg einfach eine Karte auf die Box.</p></div>`}</div>`;
   $("#add").onclick = () => cardDialog();
   if ($("#cq")) $("#cq").oninput = (e) => { const terms = norm(e.target.value).trim().split(/\s+/).filter(Boolean); $$(".card .list > li").forEach((li, i) => { const c = d.cards[i]; li.hidden = terms.length > 0 && !terms.every((t) => norm(label(c) + " " + c.id).includes(t)); }); };
   $$("[data-e]").forEach((b) => b.onclick = () => { const c = d.cards[b.dataset.e]; cardDialog(c.id, { type: "folder", ...c }); });
+  $$("[data-g]").forEach((b) => b.onclick = () => { const c = d.cards[b.dataset.g]; figureDialog(c.target, !!c.figure_v, viewCards); });
   $$("[data-d]").forEach((b) => b.onclick = run(async () => { const c = d.cards[b.dataset.d]; if (await ask("Karte löschen?", `Die Karte für „${label(c)}“ wird frei. Die Musik bleibt erhalten.`, "Löschen", true)) { await api("/api/cards/delete", { id: c.id }); viewCards(); } }));
 });
 
