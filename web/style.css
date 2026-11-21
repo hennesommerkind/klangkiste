@@ -242,3 +242,12 @@ button.picker-tg:hover { background: var(--line); }
 .picker-name { flex: 1; overflow-wrap: anywhere; }
 .picker-n { font-size: .75rem; color: var(--muted); background: var(--surface-2); border-radius: 99px; padding: 1px 8px; }
 .picker-sel { padding: 8px 12px; border-top: 1px solid var(--line); }
+
+/* Drag & Drop am Computer */
+.desk-only { display: none; }
+@media (hover: hover) and (pointer: fine) { .desk-only { display: inline; } }
+body.dragging .detail-head .figwrap, body.dragging .folders .figwrap, body.dragging #fig { outline: 2px dashed color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 4px; border-radius: 16px; }
+.dropping { position: relative; outline: 3px solid var(--accent) !important; outline-offset: 4px; border-radius: 16px; }
+.dropping::after { content: attr(data-hint); position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 5; background: var(--accent); color: #fff; font-weight: 700; font-size: .8rem; padding: 6px 10px; border-radius: 99px; white-space: nowrap; pointer-events: none; box-shadow: 0 4px 12px rgba(0,0,0,.2); }
+.fg-root.dropping { outline-offset: 8px; }
+.fg-root.dropping::after { top: 40px; transform: translateX(-50%); }

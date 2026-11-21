@@ -128,6 +128,51 @@ function nowCover(s, idle) {
   return `<div class="figwrap${s.figure && !idle ? " has-fig" : ""}">${cover(idle ? null : s.folder ?? "Radio", s.folder != null)}${idle ? "" : figImg(s.figure)}</div>`;
 }
 
+// ---------- Ablegen von Dateien (Drag & Drop am Computer) ----------
+const MODEL_EXT = /\.(stl|3mf|glb|gltf|obj|mtl)$/i;
+const isModel = (f) => /\.(stl|3mf|glb|gltf|obj)$/i.test(f.name);
+const isImage = (f) => /^image\//.test(f.type) || /\.(jpe?g|png|webp|gif|heic)$/i.test(f.name);
+const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
+/** el wird beim Darüberziehen hervorgehoben; onFiles bekommt die abgelegten Dateien */
+function dropTarget(el, onFiles, hint) {
+  if (!el) return;
+  let depth = 0;
+  if (hint) el.dataset.hint = hint;
+  el.addEventListener("dragenter", (e) => { if (!hasFiles(e)) return; e.preventDefault(); depth++; el.classList.add("dropping"); });
+  el.addEventListener("dragover", (e) => { if (!hasFiles(e)) return; e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = "copy"; });
+  el.addEventListener("dragleave", () => { if (--depth <= 0) { depth = 0; el.classList.remove("dropping"); } });
+  el.addEventListener("drop", (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault(); e.stopPropagation(); depth = 0; el.classList.remove("dropping");
+    document.body.classList.remove("dragging");
+    const files = [...e.dataTransfer.files]; if (files.length) onFiles(files);
+  });
+}
+// Danebengezielte Dateien nicht im Browser öffnen; beim Ziehen alle Ablageflächen zeigen
+(() => {
+  let n = 0;
+  window.addEventListener("dragenter", (e) => { if (hasFiles(e)) { n++; document.body.classList.add("dragging"); } });
+  window.addEventListener("dragleave", () => { if (--n <= 0) { n = 0; document.body.classList.remove("dragging"); } });
+  window.addEventListener("dragover", (e) => { if (hasFiles(e)) e.preventDefault(); });
+  window.addEventListener("drop", (e) => { if (hasFiles(e)) e.preventDefault(); n = 0; document.body.classList.remove("dragging"); });
+})();
+
+async function uploadCover(folder, file) {
+  const blob = await squareJpeg(file);
+  const fd = new FormData(); fd.append("file", blob, "cover.jpg");
+  const r = await fetch("/api/cover?folder=" + encodeURIComponent(folder), { method: "POST", body: fd });
+  if (!r.ok) throw new Error((await r.json()).error);
+  toast("Titelbild gespeichert");
+}
+/** Auf ein Cover abgelegt: Bild = Titelbild, 3D-Datei = Figur, Audio = Titel hochladen */
+const dropOnFolder = (folder, has, after) => run(async (files) => {
+  if (files.some(isModel)) return figureDialog(folder, has, after, files);
+  const img = files.find(isImage), audio = files.filter((f) => /^audio\//.test(f.type) || /\.(mp3|m4a|aac|ogg|opus|flac|wav)$/i.test(f.name));
+  if (audio.length) { await upload(folder, audio); return after && after(); }
+  if (img) { await uploadCover(folder, img); return after && after(); }
+  toast("Diese Datei kann ich hier nicht verwenden", "error");
+});
+
 // ---------- 3D-Figur aus einer STL-Datei ----------
 const FIGICON = `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2.6"/><path d="M8.5 21l1-7.5L7 11l2.2-2.6h5.6L17 11l-2.5 2.5 1 7.5"/><path d="M6 21h12"/></svg>`;
 function loadScript(src) {
@@ -136,16 +181,16 @@ function loadScript(src) {
     const s = document.createElement("script"); s.src = src; s.onload = res; s.onerror = () => rej(new Error("Konnte den Figuren-Zeichner nicht laden")); document.head.appendChild(s);
   });
 }
-function figureDialog(folder, has, after) {
+function figureDialog(folder, has, after, initial = null) {
   const COLORS = ["#e8dfd0", "#d9b38c", "#9c6b45", "#5b6b73", "#2f3a3d", "#c94f3d", "#e0a33a", "#4f8f5b", "#3d74b8", "#a46bb8"];
   const st = { kind: null, model: null, photo: null, color: localStorage.getItem("kk-figcolor") || COLORS[0], yaw: -25, pitch: 12, zUp: null, original: true, tol: 30 };
-  openDialog(`<h2>Figur für „${esc(leaf(folder))}“</h2>
+  openDialog(`<div class="fg-root"><h2>Figur für „${esc(leaf(folder))}“</h2>
     <p class="small muted" style="margin-top:-4px">Die Figur steht dann halb über dem Cover – in der Übersicht, in der Ordneransicht und bei „Läuft“.</p>
     <div class="fg-pick">
       <label class="btn">${FIGICON} 3D-Datei<input type="file" id="fg-file" multiple hidden></label>
       <label class="btn">${ICON.camera} Foto<input type="file" id="fg-photo" accept="image/*" hidden></label>
     </div>
-    <p class="small muted" style="margin:8px 0 0">3D: STL, 3MF (mit Druckfarben aus Bambu Studio), GLB/glTF oder OBJ (mit Textur). Bei OBJ die .mtl und das Bild mit auswählen. Foto: Figur vor einfarbigem Hintergrund, am besten weißes Papier.</p>
+    <p class="small muted" style="margin:8px 0 0"><span class="desk-only">Du kannst die Datei auch einfach hierher ziehen. </span>3D: STL, 3MF (mit Druckfarben aus Bambu Studio), GLB/glTF oder OBJ (mit Textur). Bei OBJ die .mtl und das Bild mit auswählen. Foto: Figur vor einfarbigem Hintergrund, am besten weißes Papier.</p>
     <div id="fg-stage" class="fg-stage" hidden><div class="figwrap has-fig fg-prev">${cover(folder, true)}<canvas id="fg-canvas"></canvas></div></div>
     <p id="fg-msg" class="small muted" style="min-height:1.2em;margin:10px 0 0"></p>
     <div id="fg-ctl" hidden>
@@ -161,7 +206,7 @@ function figureDialog(folder, has, after) {
         <p class="small muted" style="margin:-4px 0 0">Bleibt Hintergrund stehen: weiter nach rechts. Fehlen Teile der Figur: nach links.</p>
       </div>
     </div>
-    <div class="actions">${has ? `<button class="btn danger" id="fg-del" style="margin-right:auto">Entfernen</button>` : ""}<button class="btn" data-x="0">Abbrechen</button><button class="btn primary" id="fg-save" disabled>Speichern</button></div>`);
+    <div class="actions">${has ? `<button class="btn danger" id="fg-del" style="margin-right:auto">Entfernen</button>` : ""}<button class="btn" data-x="0">Abbrechen</button><button class="btn primary" id="fg-save" disabled>Speichern</button></div></div>`);
   $$("[data-x]", dialog).forEach((b) => b.onclick = closeDialog);
   const msg = (t) => $("#fg-msg").textContent = t;
   const M = () => window.KlangkisteModel;
@@ -185,20 +230,18 @@ function figureDialog(folder, has, after) {
     $("#fg-color").value = st.color; markColor();
   };
   const busyMsg = async (t) => { msg(t); await new Promise((r) => setTimeout(r, 30)); };
-  $("#fg-file").onchange = run(async (e) => {
-    const files = [...e.target.files]; if (!files.length) return;
+  const loadModel = run(async (files) => {
     await busyMsg("Lese die Datei …");
     await loadScript("/static/model.js");
     st.model = await M().load(files); st.kind = "model"; st.photo = null;
     const n = st.model.pos.length / 9;
+    const what = `${n.toLocaleString("de-DE")} Dreiecke${st.model.colored ? (st.model.textures.length ? ", mit Textur" : ", mit Farben") : ""}`;
     show();
-    await busyMsg(`${n.toLocaleString("de-DE")} Dreiecke${st.model.colored ? (st.model.textures.length ? ", mit Textur" : ", mit Farben") : ""} – zeichne …`);
+    await busyMsg(what + " – zeichne …");
     draw();
-    msg(`${n.toLocaleString("de-DE")} Dreiecke${st.model.colored ? (st.model.textures.length ? ", mit Textur" : ", mit Farben") : ""} – so steht die Figur auf dem Cover:`);
-    e.target.value = "";
+    msg(what + " – so steht die Figur auf dem Cover:");
   });
-  $("#fg-photo").onchange = run(async (e) => {
-    const f = e.target.files[0]; if (!f) return;
+  const loadPhoto = run(async (f) => {
     await busyMsg("Lese das Foto …");
     await loadScript("/static/model.js");
     st.photo = await M().loadPhoto(f); st.kind = "photo"; st.model = null;
@@ -206,8 +249,17 @@ function figureDialog(folder, has, after) {
     $("#fg-c-photo").hidden = st.photo.cutout;
     draw();
     msg(st.photo.cutout ? "Das Bild ist schon freigestellt." : "Hintergrund entfernt – so steht die Figur auf dem Cover:");
-    e.target.value = "";
   });
+  const take = (files) => {
+    if (!files.length) return;
+    if (files.some((f) => isModel(f))) loadModel(files);
+    else if (isImage(files[0])) loadPhoto(files[0]);
+    else toast("Bitte eine 3D-Datei (STL, 3MF, GLB, OBJ) oder ein Foto ablegen", "error");
+  };
+  $("#fg-file").onchange = (e) => { const f = [...e.target.files]; e.target.value = ""; if (f.length) loadModel(f); };
+  $("#fg-photo").onchange = (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) loadPhoto(f); };
+  dropTarget($(".fg-root", dialog), take, "Datei hier ablegen");
+  if (initial && initial.length) take(initial);
   $$(".fg-sw").forEach((b) => b.onclick = () => { st.color = b.dataset.c; $("#fg-color").value = st.color; markColor(); redraw(); });
   $("#fg-color").oninput = (e) => { st.color = e.target.value; markColor(); redraw(); };
   $("#fg-orig").onchange = (e) => { st.original = e.target.checked; $("#fg-colrow").hidden = st.original; redraw(); };
@@ -310,7 +362,13 @@ function tiles(list) {
     <div class="figwrap${f.figure_v ? " has-fig" : ""}">${cover(f.name, f.cover, "&v=" + f.cover_v)}${figImg(figUrl(f.name, f.figure_v))}${f.cards.length ? `<span class="badge">${ICON.card.replace('class="icon"', "")} Karte</span>` : ""}</div>
     <b>${esc(leaf(f.name))}</b><small>${subLabel(f)}</small></button>`).join("")}</div>`;
 }
-function bindTiles() { $$(".folder[data-f]").forEach((b) => b.onclick = () => goFolder(b.dataset.f)); }
+function bindTiles() {
+  $$(".folder[data-f]").forEach((b) => {
+    b.onclick = () => goFolder(b.dataset.f);
+    const wrap = $(".figwrap", b) || b.firstElementChild;
+    dropTarget(wrap, dropOnFolder(b.dataset.f, !!$(".fig", b), () => render()), "Bild = Titelbild · 3D = Figur");
+  });
+}
 const viewOfCat = (c) => c === "Musik" ? "musik" : "hoerspiele";
 const goFolder = (p) => go(viewOfCat(catOf(p)), p);
 const goCat = (c) => go(viewOfCat(c));
@@ -522,13 +580,12 @@ const viewFolder = run(async () => {
   $("#cv").onclick = () => $("#cvfile").click();
   $("#cvfile").onchange = run(async (e) => {
     const file = e.target.files[0]; if (!file) return;
-    const blob = await squareJpeg(file);
-    const fd = new FormData(); fd.append("file", blob, "cover.jpg");
-    const r = await fetch("/api/cover?folder=" + encodeURIComponent(name), { method: "POST", body: fd });
-    if (!r.ok) throw new Error((await r.json()).error);
-    toast("Titelbild gespeichert"); viewFolder();
+    await uploadCover(name, file); viewFolder();
   });
   $("#fig").onclick = () => figureDialog(name, !!f.figure_v, viewFolder);
+  // Am Computer: Bild aufs Cover ziehen = Titelbild, 3D-Datei = Figur; auf den Figur-Knopf auch Fotos
+  dropTarget($(".detail-head .figwrap"), dropOnFolder(name, !!f.figure_v, viewFolder), "Bild = Titelbild · 3D-Datei = Figur");
+  dropTarget($("#fig"), (files) => figureDialog(name, !!f.figure_v, viewFolder, files), "Als Figur");
   if ($("#cvdel")) $("#cvdel").onclick = run(async () => { if (await ask("Titelbild entfernen?", "Danach wird – falls vorhanden – das Bild aus den Musikdateien angezeigt.", "Entfernen", true)) { await api("/api/cover?folder=" + encodeURIComponent(name), {}, "DELETE"); viewFolder(); } });
 });
 
