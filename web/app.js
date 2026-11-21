@@ -321,7 +321,7 @@ function updateNow() {
   const idle = !s.file;
   $("#np-folder").textContent = idle ? "" : s.spotify ? "Spotify" : s.url ? "Radio" : pretty((s.folder || "").replace(/^(Hörspiele|Musik)\//, ""));
   $("#np-title").textContent = idle ? "Nichts ausgewählt" : s.title;
-  $("#np-sub").textContent = idle ? "Leg eine Karte auf oder wähle etwas unter „Musik“." : [s.artist, s.album && s.spotify ? s.album : "", s.tracks > 1 ? `Titel ${s.track} von ${s.tracks}` : ""].filter(Boolean).join(" · ");
+  $("#np-sub").textContent = idle ? "Leg eine Karte auf oder wähle etwas unter „Musik“." : [s.artist, s.album && s.spotify ? s.album : "", s.episodes > 1 ? `Folge ${s.episode} von ${s.episodes}` : s.tracks > 1 ? `Titel ${s.track} von ${s.tracks}` : ""].filter(Boolean).join(" · ");
   $("#np-play").innerHTML = s.state === "play" ? ICON.pause : ICON.play;
   const vol = $("#np-vol");
   if (!S.volBusy || Date.now() - S.volBusy > 1500) { vol.max = (s.headphones ? S.cfg?.bluetooth?.volume_max : S.cfg?.audio.volume_max) || 100; vol.value = s.volume; $("#np-volv").textContent = s.volume; vol.style.setProperty("--p", (s.volume / vol.max * 100) + "%"); }

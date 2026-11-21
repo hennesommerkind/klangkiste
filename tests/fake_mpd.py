@@ -8,6 +8,7 @@ AUDIO = (".mp3", ".ogg", ".flac", ".m4a", ".wav")
 def files(uri):
     base = os.path.join(ROOT, uri)
     if "://" in uri: return [uri]
+    if os.path.isfile(base): return [uri]
     out = []
     for dp, dn, fn in os.walk(base):
         dn.sort()

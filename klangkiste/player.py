@@ -29,6 +29,7 @@ class Player:
         self._user_stop = False
         self._prev = {}
         self.current_folder = None
+        self._queue_files = None   # Reihenfolge der Warteschlange, wenn bekannt (für Folgen-Sprünge)
         self.headphones = False
 
     # ---------- Verbindung ----------
@@ -80,6 +81,7 @@ class Player:
         if not title and file:
             title = file.rsplit("/", 1)[-1].rsplit(".", 1)[0]
         stream = any(o.get("outputname") == STREAM_OUTPUT and o.get("outputenabled") == "1" for o in outs)
+        ep, eps = self._episode_info(file)
         new = {
             "state": st.get("state", "stop"),
             "volume": int(st.get("volume", 0) or 0),
@@ -96,6 +98,7 @@ class Player:
             "random": st.get("random") == "1",
             "stream": stream,
             "headphones": self.headphones,
+            "episode": ep, "episodes": eps,
         }
         self._track_resume(new)
         self._publish(new)
@@ -149,6 +152,57 @@ class Player:
                 log.exception("Fortsetzungsdaten")
 
     # ---------- Befehle ----------
+    # ---------- Serien: Vor/Zurück springen ganze Folgen ----------
+    def _episode_of(self, file):
+        """Folge (Unterordner des gespielten Ordners), zu der eine Datei gehört – sonst None."""
+        base = self.current_folder
+        if not base or not file or not file.startswith(base + "/"):
+            return None
+        rest = file[len(base) + 1:]
+        return rest.split("/", 1)[0] if "/" in rest else None
+
+    def _episode_info(self, file):
+        """(Nummer der Folge, Anzahl Folgen) für die Anzeige, wenn eine Serie läuft."""
+        files = self._queue_files
+        ep = self._episode_of(file)
+        if not files or ep is None:
+            return 0, 0
+        order = list(dict.fromkeys(self._episode_of(f) for f in files))
+        if len(order) < 2 or None in order or ep not in order:
+            return 0, 0
+        return order.index(ep) + 1, len(order)
+
+    def _episode_jump(self, c, direction):
+        """Springt zur ersten Datei der nächsten/vorigen Folge. False, wenn keine Serie läuft."""
+        st = c.status()
+        if st.get("random") == "1" or "song" not in st:
+            return False
+        files = self._queue_files
+        if not files or len(files) != int(st.get("playlistlength", 0)):
+            files = [it.get("file", "") for it in c.playlistinfo()]
+        eps = [self._episode_of(f) for f in files]
+        if None in eps or len(set(eps)) < 2:
+            return False
+        pos = int(st["song"])
+        start = pos
+        while start > 0 and eps[start - 1] == eps[pos]:
+            start -= 1
+        if direction > 0:
+            nxt = next((j for j in range(pos + 1, len(eps)) if eps[j] != eps[pos]), None)
+            if nxt is None:
+                log.info("Letzte Folge – kein Sprung nach vorn")
+                return True
+            c.play(nxt)
+        else:
+            if start == 0:
+                c.play(0)          # erste Folge: es gibt keine davor – an ihren Anfang
+                return True
+            p = start - 1
+            while p > 0 and eps[p - 1] == eps[start - 1]:
+                p -= 1
+            c.play(p)
+        return True
+
     def play_folder(self, folder, shuffle=False, restart=False):
         cfg = self.store.config["audio"]
         self._save_resume(force=True)
@@ -157,6 +211,8 @@ class Player:
         else:
             r = self.store.resume.get(folder)
         files = self.files_for(folder) if self.files_for else None
+
+        exact = {"ok": False}
 
         def go(c):
             c.clear()
@@ -171,6 +227,7 @@ class Player:
                     added = True
                 except mpd.CommandError:
                     c.clear()
+            exact["ok"] = added
             if not added:
                 c.add(folder)
             n = int(c.status().get("playlistlength", 0))
@@ -188,9 +245,14 @@ class Player:
 
         self._call(go)
         self.current_folder = folder
+        # Nur wenn einzeln hinzugefügt, stimmt die Liste mit der Warteschlange überein
+        self._queue_files = list(files) if files and exact["ok"] else None
         self.refresh()
 
     def play_url(self, url):
+        self.current_folder = None
+        self._queue_files = None
+
         def go(c):
             c.clear()
             c.random(0)
@@ -229,13 +291,20 @@ class Player:
         self._safe(lambda c: c.stop())
 
     def next(self):
-        self._safe(lambda c: c.next())
+        # Läuft eine Serie (Ordner mit Folgen-Unterordnern), geht es zur nächsten Folge,
+        # nicht zum nächsten Kapitel; sonst zum nächsten Titel.
+        self._safe(lambda c: self._episode_jump(c, +1) or c.next())
 
     def prev(self):
-        if self.state.get("elapsed", 0) > 4 or self.state.get("track", 1) <= 1:
-            self._safe(lambda c: c.seekcur(0))
-        else:
-            self._safe(lambda c: c.previous())
+        # Serie: immer eine Folge zurück (nicht erst an den Anfang der laufenden).
+        def go(c):
+            if self._episode_jump(c, -1):
+                return
+            if self.state.get("elapsed", 0) > 4 or self.state.get("track", 1) <= 1:
+                c.seekcur(0)
+            else:
+                c.previous()
+        self._safe(go)
 
     def seek(self, seconds):
         self._safe(lambda c: c.seekcur(max(0, float(seconds))))
