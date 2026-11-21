@@ -5,6 +5,7 @@ import android.app.DownloadManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.net.Uri;
 import android.net.nsd.NsdManager;
@@ -338,9 +339,21 @@ public class MainActivity extends Activity {
 
     private void save(String url) { prefs.edit().putString("url", url).apply(); }
 
+    /** Steuerung in Sperrbildschirm und Benachrichtigungsleiste starten. */
+    private void startControls(String url) {
+        if (Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                && !prefs.getBoolean("asked_notify", false)) {
+            prefs.edit().putBoolean("asked_notify", true).apply();
+            requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, 2);
+        }
+        ControlService.start(this, url);
+    }
+
     private void load(String url) {
         showPanel("Verbinde …", true);
         web.loadUrl(url + "/");
+        startControls(url);
     }
 
     // ---------- Android-Kleinkram ----------
@@ -373,6 +386,14 @@ public class MainActivity extends Activity {
         } else {
             super.onBackPressed();
         }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // War die Steuerung wegen Pause verschwunden, kommt sie beim Öffnen der App zurück
+        String url = prefs.getString("url", null);
+        if (url != null && web.getUrl() != null && web.getUrl().startsWith("http")) ControlService.start(this, url);
     }
 
     @Override

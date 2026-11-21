@@ -186,7 +186,7 @@ class Box:
         s = dict(self.player.state)
         s.update({"card": self.active_card, "spotify": False, "cover_url": None,
                   "controller": self.controller, "name": self.store.config["name"],
-                  "update": bool(self.update_info.get("available"))})
+                  "update": bool(self.update_info.get("available")), "vmax": self.player.vmax()})
         if self.controller == "spotify":
             sp = self.spotify.info()
             s.update({"headphones": self.bluetooth.connected,

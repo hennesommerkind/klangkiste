@@ -5,7 +5,7 @@ android {
     compileSdk 34
     defaultConfig {
         applicationId "de.klangkiste.app"
-        minSdk 24
+        minSdk 26
         targetSdk 34
         versionCode Integer.parseInt(System.getenv("GITHUB_RUN_NUMBER") ?: "1")
         versionName "1." + (System.getenv("GITHUB_RUN_NUMBER") ?: "0")
