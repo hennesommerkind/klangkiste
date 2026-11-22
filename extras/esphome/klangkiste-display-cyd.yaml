@@ -15,6 +15,10 @@ substitutions:
   box: "192.168.178.63"          # Adresse der Klangkiste
   broker: "192.168.178.55"       # Home Assistant mit Mosquitto
   prefix: "klangkiste"           # Themen-Präfix aus den Box-Einstellungen
+  # Höhe des Karussells in Pixeln. Mehr = größere Cover, braucht aber mehr Arbeitsspeicher
+  # (Höhe × 640 Bytes am Stück). 100 läuft sicher; meldet das Display „Bild passt nicht in den
+  # Speicher“, hier verkleinern.
+  hoehe: "120"
 
 esphome:
   name: cyd-heizung              # Name bleibt, damit Updates per WLAN weiter klappen
@@ -78,56 +82,19 @@ mqtt:
                     - light.turn_on: display_backlight
                     - script.execute: backlight_timeout
 
-# Das Karussell kommt in vier Streifen (je 80 × 132): der ESP32 hat nur kleine freie Speicherblöcke.
-# Geladen wird nacheinander, jeder fertige Streifen stößt den nächsten an.
+# Das Karussell ist EIN Bild: jedes weitere Bild kostet den ESP32 einen eigenen Dekoder und Ladepuffer
 online_image:
-  - id: kk_0
-    url: "http://${box}/api/display/strip.jpg?bg=0A1929&part=0"
+  - id: kk_strip
+    url: "http://${box}/api/display/strip.jpg?bg=0A1929&h=${hoehe}"
     format: JPEG
     type: RGB565
-    buffer_size: 9000
+    buffer_size: 16000
     update_interval: never
     on_download_finished:
-      - lvgl.image.update: { id: img_0, src: kk_0 }
-      - component.update: kk_1
-    on_error:
-      - lvgl.label.update: { id: lbl_info, text: "Streifen 1 von 4 fehlt" }
-      - component.update: kk_1
-  - id: kk_1
-    url: "http://${box}/api/display/strip.jpg?bg=0A1929&part=1"
-    format: JPEG
-    type: RGB565
-    buffer_size: 9000
-    update_interval: never
-    on_download_finished:
-      - lvgl.image.update: { id: img_1, src: kk_1 }
-      - component.update: kk_2
-    on_error:
-      - lvgl.label.update: { id: lbl_info, text: "Streifen 2 von 4 fehlt" }
-      - component.update: kk_2
-  - id: kk_2
-    url: "http://${box}/api/display/strip.jpg?bg=0A1929&part=2"
-    format: JPEG
-    type: RGB565
-    buffer_size: 9000
-    update_interval: never
-    on_download_finished:
-      - lvgl.image.update: { id: img_2, src: kk_2 }
-      - component.update: kk_3
-    on_error:
-      - lvgl.label.update: { id: lbl_info, text: "Streifen 3 von 4 fehlt" }
-      - component.update: kk_3
-  - id: kk_3
-    url: "http://${box}/api/display/strip.jpg?bg=0A1929&part=3"
-    format: JPEG
-    type: RGB565
-    buffer_size: 9000
-    update_interval: never
-    on_download_finished:
-      - lvgl.image.update: { id: img_3, src: kk_3 }
+      - lvgl.image.update: { id: img_strip, src: kk_strip }
       - lambda: 'id(k_have_img) = true;'
     on_error:
-      - lvgl.label.update: { id: lbl_info, text: "Streifen 4 von 4 fehlt" }
+      - lvgl.label.update: { id: lbl_info, text: "Bild passt nicht in den Speicher" }
 
 # -----------------------------------------------------------------------
 # Hardware (wie bisher)
@@ -226,38 +193,12 @@ script:
     mode: restart
     then:
       - online_image.set_url:
-          id: kk_0
-          update: false
+          id: kk_strip
           url: !lambda |-
-            std::string u = "http://${box}/api/display/strip.jpg?bg=0A1929&part=0";
+            std::string u = "http://${box}/api/display/strip.jpg?bg=0A1929&h=${hoehe}";
             if (id(k_browse)) u += str_sprintf("&pos=%d", id(k_pos)); else u += "&v=" + id(k_image_v);
             if (id(k_up)) u += "&up=1";
             return u;
-      - online_image.set_url:
-          id: kk_1
-          update: false
-          url: !lambda |-
-            std::string u = "http://${box}/api/display/strip.jpg?bg=0A1929&part=1";
-            if (id(k_browse)) u += str_sprintf("&pos=%d", id(k_pos)); else u += "&v=" + id(k_image_v);
-            if (id(k_up)) u += "&up=1";
-            return u;
-      - online_image.set_url:
-          id: kk_2
-          update: false
-          url: !lambda |-
-            std::string u = "http://${box}/api/display/strip.jpg?bg=0A1929&part=2";
-            if (id(k_browse)) u += str_sprintf("&pos=%d", id(k_pos)); else u += "&v=" + id(k_image_v);
-            if (id(k_up)) u += "&up=1";
-            return u;
-      - online_image.set_url:
-          id: kk_3
-          update: false
-          url: !lambda |-
-            std::string u = "http://${box}/api/display/strip.jpg?bg=0A1929&part=3";
-            if (id(k_browse)) u += str_sprintf("&pos=%d", id(k_pos)); else u += "&v=" + id(k_image_v);
-            if (id(k_up)) u += "&up=1";
-            return u;
-      - component.update: kk_0      # die übrigen Streifen folgen der Reihe nach
 
   - id: show_current_image
     then:
@@ -424,17 +365,14 @@ lvgl:
         on_swipe_right:
           - script.execute: { id: browse, dir: -1 }
         widgets:
-          # Karussell (zwei Hälften, kommt fertig von der Box)
-          - image: { id: img_0, src: kk_0, x: 0, y: 8 }
-          - image: { id: img_1, src: kk_1, x: 80, y: 8 }
-          - image: { id: img_2, src: kk_2, x: 160, y: 8 }
-          - image: { id: img_3, src: kk_3, x: 240, y: 8 }
+          # Karussell (kommt fertig von der Box)
+          - image: { id: img_strip, src: kk_strip, x: 0, y: 6 }
           # unsichtbare Tippflächen über den fünf Covern
           - obj:
               x: 0
               y: 0
-              width: 30
-              height: 148 
+              width: 34
+              height: 148
               radius: 0
               border_width: 0
               bg_opa: TRANSP
@@ -443,10 +381,10 @@ lvgl:
               on_click:
                 - script.execute: { id: browse, dir: -2 }
           - obj:
-              x: 30
+              x: 34
               y: 0
               width: 66
-              height: 148 
+              height: 148
               radius: 0
               border_width: 0
               bg_opa: TRANSP
@@ -455,10 +393,10 @@ lvgl:
               on_click:
                 - script.execute: { id: browse, dir: -1 }
           - obj:
-              x: 96
+              x: 100
               y: 0
-              width: 128
-              height: 148 
+              width: 120
+              height: 148
               radius: 0
               border_width: 0
               bg_opa: TRANSP
@@ -467,10 +405,10 @@ lvgl:
               on_click:
                 - script.execute: cover_tap
           - obj:
-              x: 224
+              x: 220
               y: 0
               width: 66
-              height: 148 
+              height: 148
               radius: 0
               border_width: 0
               bg_opa: TRANSP
@@ -479,10 +417,10 @@ lvgl:
               on_click:
                 - script.execute: { id: browse, dir: 1 }
           - obj:
-              x: 290
+              x: 286
               y: 0
-              width: 30
-              height: 148 
+              width: 34
+              height: 148
               radius: 0
               border_width: 0
               bg_opa: TRANSP

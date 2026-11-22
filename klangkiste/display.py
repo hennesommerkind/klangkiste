@@ -127,10 +127,18 @@ def compose(library, folder, size=120, bg="0A1929", spotify=False, name=""):
     return _jpeg(_render(library, folder, size, bg, spotify, name))
 
 
-STRIP_W, STRIP_H = 320, 132
-# (Versatz, x, Kantenlänge) – von außen nach innen gezeichnet, die Mitte liegt obenauf
-STRIP = ((-2, 0, 60), (2, 260, 60), (-1, 30, 92), (1, 198, 92), (0, 96, 128))
+STRIP_W = 320
 _strips = {}
+
+
+def _layout(h):
+    """(Versatz, x, Kantenlänge) der fünf Kacheln für die Bildhöhe h – von außen nach innen
+    gezeichnet, die Mitte liegt obenauf."""
+    c, n, f = h - 4, round(h * 0.7), round(h * 0.46)
+    cx = (STRIP_W - c) // 2
+    nl = cx - round(n * 0.68)
+    fl = max(0, nl - round(f * 0.5))
+    return ((-2, fl, f), (2, STRIP_W - fl - f, f), (-1, nl, n), (1, STRIP_W - nl - n, n), (0, cx, c))
 
 
 def _level(library, current, up=False):
@@ -158,38 +166,39 @@ def browse(library, current, pos=None, step=0, up=False):
             "top": parent.split("/")[-1], "sub": f"{i + 1} / {len(names)}"}
 
 
-def strip(library, current, pos=None, bg="0A1929", spotify=False, name="", up=False, part=""):
-    """Karussell als JPEG (320 × 132): in der Mitte groß der gewählte Eintrag, dahinter links und
-    rechts je zwei Nachbarn, kleiner und leicht abgedunkelt. Ohne pos steht der laufende Ordner in der Mitte."""
+def strip(library, current, pos=None, bg="0A1929", spotify=False, name="", up=False, h=100):
+    """Karussell als ein JPEG (320 × h): in der Mitte groß der gewählte Eintrag, dahinter links und
+    rechts je zwei Nachbarn, kleiner und leicht abgedunkelt. Ohne pos steht der laufende Ordner in der Mitte.
+    Die Höhe bestimmt das Display – ein ESP32 ohne Zusatzspeicher schafft etwa 100 bis 120."""
     from PIL import Image
 
+    h = max(60, min(160, int(h)))
     bgc = _hex(bg)
+    layout = _layout(h)
     parent, names, cur = ("", [], 0) if spotify or not current else _level(library, current, up)
     n = len(names)
     i = (cur if pos is None else int(pos)) % n if n else 0
-    shown = [] if not n else [(off, x, size, f"{parent}/{names[(i + off) % n]}") for off, x, size in STRIP
+    shown = [] if not n else [(off, x, size, f"{parent}/{names[(i + off) % n]}") for off, x, size in layout
                               if not off or abs(off) <= (n - 1) // 2 + (1 if off > 0 and n % 2 == 0 else 0)]
-    key = (bg, spotify, current if not n else None, name if spotify else "",
+    key = (bg, h, spotify, current if not n else None, name if spotify else "",
            tuple((off, f, image_version(library, f)) for off, _, _, f in shown))
-    canvas = _strips.get(key)
-    if canvas is None:
-        canvas = Image.new("RGB", (STRIP_W, STRIP_H), bgc)
+    data = _strips.get(key)
+    if data is None:
+        canvas = Image.new("RGB", (STRIP_W, h), bgc)
         if not n:
-            canvas.paste(_render(library, None if spotify else current, 128, bg, spotify, name), (96, 2))
+            c = layout[-1][2]
+            canvas.paste(_render(library, None if spotify else current, c, bg, spotify, name), (layout[-1][1], 2))
         for off, x, size, folder in shown:
             tile = _render(library, folder, size, bg)
             if off:
                 tile = Image.blend(tile, Image.new("RGB", tile.size, bgc), 0.15 if abs(off) == 1 else 0.3)
             # nur was sich vom Hintergrund abhebt, verdeckt die Nachbarn dahinter
-            mask = _diff_mask(tile, bgc)
-            canvas.paste(tile, (x, (STRIP_H - size) // 2), mask)
-        if len(_strips) > 6:
+            canvas.paste(tile, (x, (h - size) // 2), _diff_mask(tile, bgc))
+        data = _jpeg(canvas, 78)
+        if len(_strips) > 8:
             _strips.clear()
-        _strips[key] = canvas
-    if part in ("0", "1", "2", "3"):        # vier Streifen je 80 px: kleine Speicherblöcke für den ESP32
-        x = int(part) * STRIP_W // 4
-        return _jpeg(canvas.crop((x, 0, x + STRIP_W // 4, STRIP_H)), 68)
-    return _jpeg(canvas, 82)
+        _strips[key] = data
+    return data
 
 
 def _diff_mask(tile, bgc):
