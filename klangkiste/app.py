@@ -762,7 +762,7 @@ async def api_display_browse(request):
 @routes.get("/api/display/strip.jpg")
 async def api_display_strip(request):
     """Karussell fürs Display: ohne pos der laufende Ordner in der Mitte, sonst Eintrag pos.
-    ?h=120 bestimmt die Höhe (Breite immer 320); mehr Höhe braucht mehr Speicher im Display."""
+    ?h=120&w=320 bestimmen die Größe, ?n=3 zeigt nur je einen Nachbarn. Speicher im Display: w × h × 2 Bytes."""
     b = box(request)
     q = request.query
     s = b.full_state()
@@ -771,7 +771,8 @@ async def api_display_strip(request):
         data = await asyncio.to_thread(display.strip, b.library, b.display_folder() if s.get("file") or browsing else None,
                                        int(q["pos"]) if browsing else None, q.get("bg", "0A1929"),
                                        s["spotify"] and not browsing, s.get("title") or "",
-                                       q.get("up") == "1", int(q.get("h", 100)))
+                                       q.get("up") == "1", int(q.get("h", 100)), int(q.get("w", 320)),
+                                       int(q.get("n", 5)))
     except ImportError:
         raise web.HTTPServiceUnavailable(text="Pillow fehlt – bitte die Box aktualisieren")
     return web.Response(body=data, content_type="image/jpeg", headers={"Cache-Control": "no-cache"})

@@ -131,14 +131,19 @@ STRIP_W = 320
 _strips = {}
 
 
-def _layout(h):
-    """(Versatz, x, Kantenlänge) der fünf Kacheln für die Bildhöhe h – von außen nach innen
-    gezeichnet, die Mitte liegt obenauf."""
-    c, n, f = h - 4, round(h * 0.7), round(h * 0.46)
-    cx = (STRIP_W - c) // 2
+def _layout(h, w=STRIP_W, count=5):
+    """(Versatz, x, Kantenlänge) der Kacheln für Bildhöhe h und -breite w – von außen nach innen
+    gezeichnet, die Mitte liegt obenauf. count = 5 (je zwei Nachbarn) oder 3 (je einer, dafür größer)."""
+    c = h - 4
+    cx = (w - c) // 2
+    if count <= 3:
+        n = round(h * 0.76)
+        nl = max(0, cx - round(n * 0.62))
+        return ((-1, nl, n), (1, w - nl - n, n), (0, cx, c))
+    n, f = round(h * 0.7), round(h * 0.46)
     nl = cx - round(n * 0.68)
     fl = max(0, nl - round(f * 0.5))
-    return ((-2, fl, f), (2, STRIP_W - fl - f, f), (-1, nl, n), (1, STRIP_W - nl - n, n), (0, cx, c))
+    return ((-2, fl, f), (2, w - fl - f, f), (-1, nl, n), (1, w - nl - n, n), (0, cx, c))
 
 
 def _level(library, current, up=False):
@@ -166,7 +171,7 @@ def browse(library, current, pos=None, step=0, up=False):
             "top": parent.split("/")[-1], "sub": f"{i + 1} / {len(names)}"}
 
 
-def strip(library, current, pos=None, bg="0A1929", spotify=False, name="", up=False, h=100):
+def strip(library, current, pos=None, bg="0A1929", spotify=False, name="", up=False, h=100, w=STRIP_W, count=5):
     """Karussell als ein JPEG (320 × h): in der Mitte groß der gewählte Eintrag, dahinter links und
     rechts je zwei Nachbarn, kleiner und leicht abgedunkelt. Ohne pos steht der laufende Ordner in der Mitte.
     Die Höhe bestimmt das Display – ein ESP32 ohne Zusatzspeicher schafft etwa 100 bis 120."""
@@ -174,17 +179,18 @@ def strip(library, current, pos=None, bg="0A1929", spotify=False, name="", up=Fa
 
     h = max(60, min(160, int(h)))
     bgc = _hex(bg)
-    layout = _layout(h)
+    w = max(120, min(STRIP_W, int(w)))
+    layout = _layout(h, w, int(count))
     parent, names, cur = ("", [], 0) if spotify or not current else _level(library, current, up)
     n = len(names)
     i = (cur if pos is None else int(pos)) % n if n else 0
     shown = [] if not n else [(off, x, size, f"{parent}/{names[(i + off) % n]}") for off, x, size in layout
                               if not off or abs(off) <= (n - 1) // 2 + (1 if off > 0 and n % 2 == 0 else 0)]
-    key = (bg, h, spotify, current if not n else None, name if spotify else "",
+    key = (bg, h, w, int(count), spotify, current if not n else None, name if spotify else "",
            tuple((off, f, image_version(library, f)) for off, _, _, f in shown))
     data = _strips.get(key)
     if data is None:
-        canvas = Image.new("RGB", (STRIP_W, h), bgc)
+        canvas = Image.new("RGB", (w, h), bgc)
         if not n:
             c = layout[-1][2]
             canvas.paste(_render(library, None if spotify else current, c, bg, spotify, name), (layout[-1][1], 2))

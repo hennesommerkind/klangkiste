@@ -2,7 +2,7 @@
 # CYD (ESP32-2432S028, 320×240, Touch) als Display für die Klangkiste
 #
 # Oben ein Karussell: in der Mitte groß die laufende Folge, dahinter links und
-# rechts je zwei Nachbarn. Blättern mit den Pfeilen unten, per Wischen oder
+# rechts je ein Nachbar. Blättern mit den Pfeilen unten, per Wischen oder
 # durch Antippen eines Nachbarn. Mittleres Cover antippen = abspielen.
 # Der Knopf in der Mitte unten wechselt eine Ebene höher (Serien statt Folgen).
 # Ohne Bedienung springt die Anzeige nach 15 s zurück.
@@ -15,10 +15,13 @@ substitutions:
   box: "192.168.178.63"          # Adresse der Klangkiste
   broker: "192.168.178.55"       # Home Assistant mit Mosquitto
   prefix: "klangkiste"           # Themen-Präfix aus den Box-Einstellungen
-  # Höhe des Karussells in Pixeln. Mehr = größere Cover, braucht aber mehr Arbeitsspeicher
-  # (Höhe × 640 Bytes am Stück). 100 läuft sicher; meldet das Display „Bild passt nicht in den
-  # Speicher“, hier verkleinern.
-  hoehe: "120"
+  # Größe des Karussellbilds in Pixeln. Es braucht breite × hoehe × 2 Bytes Arbeitsspeicher am Stück;
+  # rund 64.000 laufen sicher. Meldet das Display „Bild passt nicht in den Speicher“, hoehe verkleinern.
+  # rand = (320 - breite) / 2, damit das Bild mittig sitzt.
+  hoehe: "128"
+  breite: "248"
+  rand: "36"
+  anzahl: "3"                    # 3 = je ein Nachbar links und rechts, 5 = je zwei (dann breite 320, rand 0)
 
 esphome:
   name: cyd-heizung              # Name bleibt, damit Updates per WLAN weiter klappen
@@ -85,7 +88,7 @@ mqtt:
 # Das Karussell ist EIN Bild: jedes weitere Bild kostet den ESP32 einen eigenen Dekoder und Ladepuffer
 online_image:
   - id: kk_strip
-    url: "http://${box}/api/display/strip.jpg?bg=0A1929&h=${hoehe}"
+    url: "http://${box}/api/display/strip.jpg?bg=0A1929&h=${hoehe}&w=${breite}&n=${anzahl}"
     format: JPEG
     type: RGB565
     buffer_size: 16000
@@ -195,7 +198,7 @@ script:
       - online_image.set_url:
           id: kk_strip
           url: !lambda |-
-            std::string u = "http://${box}/api/display/strip.jpg?bg=0A1929&h=${hoehe}";
+            std::string u = "http://${box}/api/display/strip.jpg?bg=0A1929&h=${hoehe}&w=${breite}&n=${anzahl}";
             if (id(k_browse)) u += str_sprintf("&pos=%d", id(k_pos)); else u += "&v=" + id(k_image_v);
             if (id(k_up)) u += "&up=1";
             return u;
@@ -366,24 +369,12 @@ lvgl:
           - script.execute: { id: browse, dir: -1 }
         widgets:
           # Karussell (kommt fertig von der Box)
-          - image: { id: img_strip, src: kk_strip, x: 0, y: 6 }
-          # unsichtbare Tippflächen über den fünf Covern
+          - image: { id: img_strip, src: kk_strip, x: "${rand}", y: 6 }
+          # unsichtbare Tippflächen: links = zurück, Mitte = abspielen, rechts = weiter
           - obj:
               x: 0
               y: 0
-              width: 34
-              height: 148
-              radius: 0
-              border_width: 0
-              bg_opa: TRANSP
-              scrollable: false
-              clickable: true
-              on_click:
-                - script.execute: { id: browse, dir: -2 }
-          - obj:
-              x: 34
-              y: 0
-              width: 66
+              width: 98
               height: 148
               radius: 0
               border_width: 0
@@ -393,9 +384,9 @@ lvgl:
               on_click:
                 - script.execute: { id: browse, dir: -1 }
           - obj:
-              x: 100
+              x: 98
               y: 0
-              width: 120
+              width: 124
               height: 148
               radius: 0
               border_width: 0
@@ -405,9 +396,9 @@ lvgl:
               on_click:
                 - script.execute: cover_tap
           - obj:
-              x: 220
+              x: 222
               y: 0
-              width: 66
+              width: 98
               height: 148
               radius: 0
               border_width: 0
@@ -416,18 +407,6 @@ lvgl:
               clickable: true
               on_click:
                 - script.execute: { id: browse, dir: 1 }
-          - obj:
-              x: 286
-              y: 0
-              width: 34
-              height: 148
-              radius: 0
-              border_width: 0
-              bg_opa: TRANSP
-              scrollable: false
-              clickable: true
-              on_click:
-                - script.execute: { id: browse, dir: 2 }
 
           # Fortschritt
           - bar:
