@@ -85,46 +85,49 @@ online_image:
     url: "http://${box}/api/display/strip.jpg?bg=0A1929&part=0"
     format: JPEG
     type: RGB565
-    buffer_size: 5000
+    buffer_size: 9000
     update_interval: never
     on_download_finished:
       - lvgl.image.update: { id: img_0, src: kk_0 }
       - component.update: kk_1
     on_error:
-      - lvgl.label.update: { id: lbl_info, text: "Bild konnte nicht geladen werden" }
+      - lvgl.label.update: { id: lbl_info, text: "Streifen 1 von 4 fehlt" }
+      - component.update: kk_1
   - id: kk_1
     url: "http://${box}/api/display/strip.jpg?bg=0A1929&part=1"
     format: JPEG
     type: RGB565
-    buffer_size: 5000
+    buffer_size: 9000
     update_interval: never
     on_download_finished:
       - lvgl.image.update: { id: img_1, src: kk_1 }
       - component.update: kk_2
     on_error:
-      - lvgl.label.update: { id: lbl_info, text: "Bild konnte nicht geladen werden" }
+      - lvgl.label.update: { id: lbl_info, text: "Streifen 2 von 4 fehlt" }
+      - component.update: kk_2
   - id: kk_2
     url: "http://${box}/api/display/strip.jpg?bg=0A1929&part=2"
     format: JPEG
     type: RGB565
-    buffer_size: 5000
+    buffer_size: 9000
     update_interval: never
     on_download_finished:
       - lvgl.image.update: { id: img_2, src: kk_2 }
       - component.update: kk_3
     on_error:
-      - lvgl.label.update: { id: lbl_info, text: "Bild konnte nicht geladen werden" }
+      - lvgl.label.update: { id: lbl_info, text: "Streifen 3 von 4 fehlt" }
+      - component.update: kk_3
   - id: kk_3
     url: "http://${box}/api/display/strip.jpg?bg=0A1929&part=3"
     format: JPEG
     type: RGB565
-    buffer_size: 5000
+    buffer_size: 9000
     update_interval: never
     on_download_finished:
       - lvgl.image.update: { id: img_3, src: kk_3 }
       - lambda: 'id(k_have_img) = true;'
     on_error:
-      - lvgl.label.update: { id: lbl_info, text: "Bild konnte nicht geladen werden" }
+      - lvgl.label.update: { id: lbl_info, text: "Streifen 4 von 4 fehlt" }
 
 # -----------------------------------------------------------------------
 # Hardware (wie bisher)

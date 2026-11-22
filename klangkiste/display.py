@@ -188,7 +188,7 @@ def strip(library, current, pos=None, bg="0A1929", spotify=False, name="", up=Fa
         _strips[key] = canvas
     if part in ("0", "1", "2", "3"):        # vier Streifen je 80 px: kleine Speicherblöcke für den ESP32
         x = int(part) * STRIP_W // 4
-        return _jpeg(canvas.crop((x, 0, x + STRIP_W // 4, STRIP_H)), 72)
+        return _jpeg(canvas.crop((x, 0, x + STRIP_W // 4, STRIP_H)), 68)
     return _jpeg(canvas, 82)
 
 
