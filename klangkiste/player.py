@@ -1,3 +1,4 @@
+import re
 """Wiedergabe über MPD (Music Player Daemon)."""
 import logging
 import threading
@@ -10,6 +11,16 @@ STREAM_OUTPUT = "Hausstream"
 SPEAKER_OUTPUT = "Lautsprecher"
 HEADPHONE_OUTPUT = "Kopfhörer"
 
+
+
+_DUMMY_TITLE = re.compile(r"^(untitled|unknown|unbekannt|ohne titel|no title|(track|titel|title|audio ?track)\s*\d*)$", re.I)
+
+
+def _real_title(t):
+    """Platzhalter-Titel aus den Tags („Untitled“, „Track 03“) wie fehlende behandeln – dann zählt der Dateiname."""
+    t = (t[0] if isinstance(t, list) and t else t) or ""
+    t = str(t).strip()
+    return "" if not t or _DUMMY_TITLE.match(t) else t
 
 class Player:
     def __init__(self, store, host="127.0.0.1", port=6600, on_change=None, files_for=None, resumable=None):
@@ -77,7 +88,7 @@ class Player:
             folder = self.current_folder
         elapsed = float(st.get("elapsed", 0) or 0)
         duration = float(st.get("duration", song.get("duration", 0)) or 0)
-        title = song.get("title") or (song.get("name") if "://" in file else None)
+        title = _real_title(song.get("title")) or (song.get("name") if "://" in file else None)
         if not title and file:
             title = file.rsplit("/", 1)[-1].rsplit(".", 1)[0]
         stream = any(o.get("outputname") == STREAM_OUTPUT and o.get("outputenabled") == "1" for o in outs)
@@ -363,7 +374,7 @@ class Player:
             f = it.get("file", "")
             out.append({
                 "pos": int(it.get("pos", 0)),
-                "title": it.get("title") or f.rsplit("/", 1)[-1].rsplit(".", 1)[0],
+                "title": _real_title(it.get("title")) or f.rsplit("/", 1)[-1].rsplit(".", 1)[0],
                 "duration": round(float(it.get("duration", it.get("time", 0)) or 0)),
             })
         return out
