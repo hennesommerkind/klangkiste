@@ -945,8 +945,18 @@ def _clean_patch(b, d):
         m = dict(d["mqtt"])
         if not m.get("password"):
             m.pop("password", None)
+        if "host" in m:
+            # „http://192.168.178.55:8123/“ → nur die Adresse; 8123 ist die Weboberfläche, nicht MQTT
+            h = re.sub(r"^\w+://", "", str(m["host"]).strip()).split("/")[0]
+            if re.fullmatch(r"[^:]+:\d+", h):
+                h, p = h.rsplit(":", 1)
+                if p != "8123":
+                    m["port"] = p
+            m["host"] = h
         if "port" in m:
             m["port"] = int(m["port"])
+            if m["port"] == 8123:
+                raise ValueError("Port 8123 ist die Weboberfläche von Home Assistant – MQTT läuft auf Port 1883")
         m.pop("password_set", None)
         patch["mqtt"] = m
     if "backup" in d:
