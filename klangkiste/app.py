@@ -753,6 +753,21 @@ async def api_display_browse(request):
     return web.Response(text=json.dumps(it, ensure_ascii=False), content_type="application/json")
 
 
+@routes.get("/api/display/strip.jpg")
+async def api_display_strip(request):
+    """Karussell (320 × 100) fürs Display: ohne pos der laufende Ordner in der Mitte, sonst Eintrag pos."""
+    b = box(request)
+    q = request.query
+    s = b.full_state()
+    try:
+        data = await asyncio.to_thread(display.strip, b.library, b.display_folder() if s.get("file") or "pos" in q else None,
+                                       int(q["pos"]) if "pos" in q else None, q.get("bg", "0A1929"),
+                                       s["spotify"] and "pos" not in q, s.get("title") or "")
+    except ImportError:
+        raise web.HTTPServiceUnavailable(text="Pillow fehlt – bitte die Box aktualisieren")
+    return web.Response(body=data, content_type="image/jpeg", headers={"Cache-Control": "no-cache"})
+
+
 @routes.get("/api/display.jpg")
 async def api_display_image(request):
     """Fertiges Bild (Cover + Figur) für ESP32-Displays. ?size=120&bg=0A1929"""

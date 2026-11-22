@@ -55,11 +55,11 @@ def _placeholder(Image, ImageDraw, size, name, spotify=False):
     return im
 
 
-def compose(library, folder, size=120, bg="0A1929", spotify=False, name=""):
-    """JPEG: Cover (abgerundet) links oben, Figur rechts unten halb darüber – wie in der Weboberfläche."""
+def _render(library, folder, size, bg, spotify=False, name=""):
+    """Bild (PIL): Cover (abgerundet) links oben, Figur rechts unten halb darüber – wie in der Weboberfläche."""
     from PIL import Image, ImageDraw, ImageOps
 
-    size = max(48, min(320, int(size)))
+    size = max(24, min(320, int(size)))
     key = (image_version(library, folder, spotify), size, bg)
     if key in _cache:
         return _cache[key]
@@ -105,13 +105,50 @@ def compose(library, folder, size=120, bg="0A1929", spotify=False, name=""):
             except Exception:
                 pass
 
-    out = io.BytesIO()
-    canvas.save(out, "JPEG", quality=88)
-    data = out.getvalue()
-    if len(_cache) > 20:
+    if len(_cache) > 120:
         _cache.clear()
-    _cache[key] = data
-    return data
+    _cache[key] = canvas
+    return canvas
+
+
+def _jpeg(im, quality=88):
+    out = io.BytesIO()
+    im.save(out, "JPEG", quality=quality)
+    return out.getvalue()
+
+
+def compose(library, folder, size=120, bg="0A1929", spotify=False, name=""):
+    return _jpeg(_render(library, folder, size, bg, spotify, name))
+
+
+STRIP_W, STRIP_H = 320, 100
+STRIP = ((-2, 0, 40), (-1, 45, 60), (0, 110, 100), (1, 215, 60), (2, 280, 40))   # (Versatz, x, Kantenlänge)
+
+
+def strip(library, current, pos=None, bg="0A1929", spotify=False, name=""):
+    """Karussell als ein JPEG (320 × 100): in der Mitte der gewählte Eintrag, links und rechts
+    je zwei Nachbarn, kleiner und abgedunkelt. Ohne pos steht der laufende Ordner in der Mitte."""
+    from PIL import Image
+
+    bgc = _hex(bg)
+    canvas = Image.new("RGB", (STRIP_W, STRIP_H), bgc)
+    it = browse(library, current, pos) if not spotify else {"count": 0}
+    n = it.get("count", 0)
+    if spotify or not current or n == 0:
+        canvas.paste(_render(library, None if spotify else current, 100, bg, spotify, name), (110, 0))
+        return _jpeg(canvas, 82)
+    parent = it["folder"].rsplit("/", 1)[0]
+    names = [d.name for d in library._subdirs(library.path(parent))]
+    shade = Image.new("RGB", (100, 100), bgc)
+    for off, x, size in STRIP:
+        # bei wenigen Einträgen keinen doppelt zeigen
+        if off and (abs(off) > (n - 1) // 2 + (1 if off > 0 and n % 2 == 0 else 0)):
+            continue
+        tile = _render(library, f"{parent}/{names[(it['pos'] + off) % n]}", size, bg)
+        if off:
+            tile = Image.blend(tile, shade.resize(tile.size), 0.45 if abs(off) == 1 else 0.6)
+        canvas.paste(tile, (x, (STRIP_H - size) // 2))
+    return _jpeg(canvas, 82)
 
 
 def browse(library, current, pos=None, step=0):
