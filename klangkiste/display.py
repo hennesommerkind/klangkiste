@@ -74,7 +74,13 @@ def _render(library, folder, size, bg, spotify=False, name=""):
             data, _ = library.cover_bytes(folder)
             if data is not None:
                 src = io.BytesIO(data.read_bytes() if isinstance(data, Path) else data)
-                cover = ImageOps.fit(Image.open(src).convert("RGB"), (c, c), Image.LANCZOS)
+                im = Image.open(src)
+                if im.mode in ("RGBA", "LA", "P"):      # durchsichtige Cover: Hintergrund des Displays scheint durch
+                    im = im.convert("RGBA")
+                    flat = Image.new("RGB", im.size, bgc)
+                    flat.paste(im, (0, 0), im)
+                    im = flat
+                cover = ImageOps.fit(im.convert("RGB"), (c, c), Image.LANCZOS)
         except Exception:
             cover = None
     if cover is None:
@@ -121,52 +127,74 @@ def compose(library, folder, size=120, bg="0A1929", spotify=False, name=""):
     return _jpeg(_render(library, folder, size, bg, spotify, name))
 
 
-STRIP_W, STRIP_H = 320, 100
-STRIP = ((-2, 0, 40), (-1, 45, 60), (0, 110, 100), (1, 215, 60), (2, 280, 40))   # (Versatz, x, Kantenlänge)
+STRIP_W, STRIP_H = 320, 140
+# (Versatz, x, Kantenlänge) – von außen nach innen gezeichnet, die Mitte liegt obenauf
+STRIP = ((-2, 0, 64), (2, 256, 64), (-1, 30, 98), (1, 192, 98), (0, 92, 136))
+_strips = {}
 
 
-def strip(library, current, pos=None, bg="0A1929", spotify=False, name=""):
-    """Karussell als ein JPEG (320 × 100): in der Mitte der gewählte Eintrag, links und rechts
-    je zwei Nachbarn, kleiner und abgedunkelt. Ohne pos steht der laufende Ordner in der Mitte."""
-    from PIL import Image
-
-    bgc = _hex(bg)
-    canvas = Image.new("RGB", (STRIP_W, STRIP_H), bgc)
-    it = browse(library, current, pos) if not spotify else {"count": 0}
-    n = it.get("count", 0)
-    if spotify or not current or n == 0:
-        canvas.paste(_render(library, None if spotify else current, 100, bg, spotify, name), (110, 0))
-        return _jpeg(canvas, 82)
-    parent = it["folder"].rsplit("/", 1)[0]
-    names = [d.name for d in library._subdirs(library.path(parent))]
-    shade = Image.new("RGB", (100, 100), bgc)
-    for off, x, size in STRIP:
-        # bei wenigen Einträgen keinen doppelt zeigen
-        if off and (abs(off) > (n - 1) // 2 + (1 if off > 0 and n % 2 == 0 else 0)):
-            continue
-        tile = _render(library, f"{parent}/{names[(it['pos'] + off) % n]}", size, bg)
-        if off:
-            tile = Image.blend(tile, shade.resize(tile.size), 0.15 if abs(off) == 1 else 0.3)
-        canvas.paste(tile, (x, (STRIP_H - size) // 2))
-    return _jpeg(canvas, 82)
-
-
-def browse(library, current, pos=None, step=0):
-    """Ein Eintrag zum Blättern am Display: die Geschwister des laufenden Ordners
-    (Folgen einer Serie, sonst die Ordner derselben Ebene), in der Reihenfolge der Oberfläche."""
+def _level(library, current, up=False):
+    """(Elternordner, Namen der Einträge, Index des laufenden) für die Ebene, in der geblättert wird."""
     current = (current or "").strip("/")
+    if up and current.count("/") >= 2:          # eine Ebene höher: Serie statt Folge
+        current = current.rsplit("/", 1)[0]
     parent = current.rsplit("/", 1)[0] if "/" in current else "Hörspiele"
     try:
         names = [d.name for d in library._subdirs(library.path(parent))]
     except (LibraryError, OSError):
         names = []
+    leaf = current.rsplit("/", 1)[-1]
+    return parent, names, (names.index(leaf) if leaf in names and "/" in current else 0)
+
+
+def browse(library, current, pos=None, step=0, up=False):
+    """Ein Eintrag zum Blättern am Display: die Geschwister des laufenden Ordners – bei einer Serie
+    ihre Folgen, sonst (oder mit up) die Ordner der Ebene darüber. Reihenfolge wie in der Oberfläche."""
+    parent, names, cur = _level(library, current, up)
     if not names:
         return {"pos": 0, "count": 0, "name": "", "folder": "", "sub": "", "top": ""}
-    leaf = current.rsplit("/", 1)[-1]
-    cur = names.index(leaf) if leaf in names and "/" in current else 0
-    i = (cur + int(step)) if pos is None else int(pos)
-    i %= len(names)
-    series = parent.count("/") >= 1
+    i = ((cur + int(step)) if pos is None else int(pos)) % len(names)
     return {"pos": i, "count": len(names), "current": cur, "name": names[i], "folder": f"{parent}/{names[i]}",
-            "top": parent.split("/")[-1],
-            "sub": f"{'Folge ' if series else ''}{i + 1} von {len(names)}"}
+            "top": parent.split("/")[-1], "sub": f"{i + 1} / {len(names)}"}
+
+
+def strip(library, current, pos=None, bg="0A1929", spotify=False, name="", up=False, part=""):
+    """Karussell als JPEG (320 × 140): in der Mitte groß der gewählte Eintrag, dahinter links und
+    rechts je zwei Nachbarn, kleiner und leicht abgedunkelt. Ohne pos steht der laufende Ordner in der Mitte."""
+    from PIL import Image
+
+    bgc = _hex(bg)
+    parent, names, cur = ("", [], 0) if spotify or not current else _level(library, current, up)
+    n = len(names)
+    i = (cur if pos is None else int(pos)) % n if n else 0
+    shown = [] if not n else [(off, x, size, f"{parent}/{names[(i + off) % n]}") for off, x, size in STRIP
+                              if not off or abs(off) <= (n - 1) // 2 + (1 if off > 0 and n % 2 == 0 else 0)]
+    key = (bg, spotify, current if not n else None, name if spotify else "",
+           tuple((off, f, image_version(library, f)) for off, _, _, f in shown))
+    canvas = _strips.get(key)
+    if canvas is None:
+        canvas = Image.new("RGB", (STRIP_W, STRIP_H), bgc)
+        if not n:
+            canvas.paste(_render(library, None if spotify else current, 136, bg, spotify, name), (92, 2))
+        for off, x, size, folder in shown:
+            tile = _render(library, folder, size, bg)
+            if off:
+                tile = Image.blend(tile, Image.new("RGB", tile.size, bgc), 0.15 if abs(off) == 1 else 0.3)
+            # nur was sich vom Hintergrund abhebt, verdeckt die Nachbarn dahinter
+            mask = _diff_mask(tile, bgc)
+            canvas.paste(tile, (x, (STRIP_H - size) // 2), mask)
+        if len(_strips) > 6:
+            _strips.clear()
+        _strips[key] = canvas
+    if part == "l":
+        canvas = canvas.crop((0, 0, STRIP_W // 2, STRIP_H))
+    elif part == "r":
+        canvas = canvas.crop((STRIP_W // 2, 0, STRIP_W, STRIP_H))
+    return _jpeg(canvas, 82)
+
+
+def _diff_mask(tile, bgc):
+    """Maske der Bildpunkte, die sich vom Hintergrund unterscheiden (Figur, die über das Cover hinausragt)."""
+    from PIL import Image, ImageChops
+    d = ImageChops.difference(tile, Image.new("RGB", tile.size, bgc)).convert("L")
+    return d.point(lambda v: 255 if v > 10 else 0)

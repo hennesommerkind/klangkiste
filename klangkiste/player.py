@@ -260,6 +260,29 @@ class Player:
         self._queue_files = list(files) if files and exact["ok"] else None
         self.refresh()
 
+    def play_episode(self, folder):
+        """Eine Folge antippen (Display): die Serie bleibt die Abspielliste, gesprungen wird an den
+        Anfang dieser Folge – so laufen danach die nächsten Folgen weiter und Vor/Zurück springen folgenweise.
+        Ordner direkt unter Hörspiele/Musik werden normal gestartet (mit Fortsetzen)."""
+        folder = str(folder).strip("/")
+        parts = folder.split("/")
+        if len(parts) < 3:
+            return self.play_folder(folder)
+        series = "/".join(parts[:-1])
+        if self.current_folder != series or not self._queue_files:
+            self.play_folder(series, restart=True)
+
+        def go(c):
+            files = self._queue_files or [it.get("file", "") for it in c.playlistinfo()]
+            i = next((j for j, f in enumerate(files) if f.startswith(folder + "/")), None)
+            if i is None:
+                raise ValueError(f"Folge „{parts[-1]}“ nicht gefunden")
+            c.random(0)
+            c.play(i)
+
+        self._call(go)
+        self.refresh()
+
     def play_url(self, url):
         self.current_folder = None
         self._queue_files = None

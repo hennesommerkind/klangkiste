@@ -1,11 +1,11 @@
 # =======================================================================
 # CYD (ESP32-2432S028, 320×240, Touch) als Display für die Klangkiste
 #
-# Zeigt, was läuft (Cover mit Figur, Serie, Titel, Folge, Fortschritt).
-# Oben ein Karussell: in der Mitte die laufende Folge, links und rechts je zwei
-# Nachbarn. Blättern mit den Pfeilen, per Wischen oder durch Antippen eines
-# Nachbarn. Mittleres Cover antippen = diese Folge abspielen. Ohne Bedienung
-# springt die Anzeige nach 15 s zurück.
+# Oben ein Karussell: in der Mitte groß die laufende Folge, dahinter links und
+# rechts je zwei Nachbarn. Blättern mit den Pfeilen unten, per Wischen oder
+# durch Antippen eines Nachbarn. Mittleres Cover antippen = abspielen.
+# Der Knopf in der Mitte unten wechselt eine Ebene höher (Serien statt Folgen).
+# Ohne Bedienung springt die Anzeige nach 15 s zurück.
 #
 # Daten: MQTT klangkiste/state · Bilder und Blättern: http://<box>/api/display…
 # Secrets: wifi_ssid, wifi_password, cyd_heizung__encryption_key,
@@ -57,60 +57,49 @@ mqtt:
       then:
         - lambda: |-
             std::string st = x["state"] | "stop";
-            std::string title = x["title"] | "";
-            std::string folder = x["folder"] | "";
-            std::string series = x["series"] | "";
-            bool spotify = x["spotify"] | false;
-            int ep = x["episode"] | 0, eps = x["episodes"] | 0;
-            int tr = x["track"] | 0, trs = x["tracks"] | 0;
-
             id(k_playing) = (st == "play");
             id(k_elapsed) = x["elapsed"] | 0.0f;
             id(k_duration) = x["duration"] | 0.0f;
-
-            std::string top;
-            if (spotify) top = "Spotify";
-            else if (!series.empty()) top = series;
-            else if (!folder.empty()) {
-              size_t p = folder.rfind('/');
-              top = p == std::string::npos ? folder : folder.substr(p + 1);
-            }
-            id(k_top) = top;
-            id(k_title) = title.empty() ? (folder.empty() && !spotify ? "Nichts ausgewählt" : "") : title;
-
-            std::string sub;
-            if (eps > 1) sub = "Folge " + to_string(ep) + " von " + to_string(eps);
-            else if (trs > 1) sub = "Titel " + to_string(tr) + " von " + to_string(trs);
-            id(k_sub) = sub;
-
+            // Bild neu laden, wenn sich Cover/Figur oder die Folge geändert haben
             std::string img = x["image_v"] | "idle";
+            img += "-" + to_string((int) (x["episode"] | 0));
             id(k_img_changed) = (img != id(k_image_v));
             id(k_image_v) = img;
         - if:
             condition:
               lambda: 'return !id(k_browse);'
             then:
-              - script.execute: refresh_ui
+              - script.execute: refresh_time
               - if:
                   condition:
                     lambda: 'return id(k_img_changed);'
                   then:
                     - script.execute: show_current_image
-                    # neue Figur aufgelegt: Display einschalten
                     - light.turn_on: display_backlight
                     - script.execute: backlight_timeout
 
+# Das Karussell kommt in zwei Hälften (je 160 × 140), weil der ESP32 wenig Speicher am Stück hat
 online_image:
-  - id: kk_cover
-    url: "http://${box}/api/display/strip.jpg?bg=0A1929"
+  - id: kk_l
+    url: "http://${box}/api/display/strip.jpg?bg=0A1929&part=l"
     format: JPEG
     type: RGB565
-    buffer_size: 24000
+    buffer_size: 16000
     update_interval: never
     on_download_finished:
-      - lvgl.image.update:
-          id: cover_img
-          src: kk_cover
+      - lvgl.image.update: { id: img_l, src: kk_l }
+      - component.update: kk_r
+    on_error:
+      - lvgl.label.update: { id: lbl_info, text: "Bild konnte nicht geladen werden" }
+  - id: kk_r
+    url: "http://${box}/api/display/strip.jpg?bg=0A1929&part=r"
+    format: JPEG
+    type: RGB565
+    buffer_size: 16000
+    update_interval: never
+    on_download_finished:
+      - lvgl.image.update: { id: img_r, src: kk_r }
+      - lambda: 'id(k_have_img) = true;'
 
 # -----------------------------------------------------------------------
 # Hardware (wie bisher)
@@ -186,17 +175,14 @@ globals:
   - { id: k_playing, type: bool, initial_value: "false" }
   - { id: k_elapsed, type: float, initial_value: "0" }
   - { id: k_duration, type: float, initial_value: "0" }
-  - { id: k_top, type: std::string, initial_value: '""' }
-  - { id: k_title, type: std::string, initial_value: '"Verbinde …"' }
-  - { id: k_sub, type: std::string, initial_value: '""' }
   - { id: k_image_v, type: std::string, initial_value: '""' }
   - { id: k_img_changed, type: bool, initial_value: "false" }
+  - { id: k_have_img, type: bool, initial_value: "false" }
   # Blättern
   - { id: k_browse, type: bool, initial_value: "false" }
+  - { id: k_up, type: bool, initial_value: "false" }
   - { id: k_pos, type: int, initial_value: "0" }
   - { id: b_ok, type: bool, initial_value: "false" }
-  - { id: b_name, type: std::string, initial_value: '""' }
-  - { id: b_top, type: std::string, initial_value: '""' }
   - { id: b_sub, type: std::string, initial_value: '""' }
   - { id: b_folder, type: std::string, initial_value: '""' }
 
@@ -207,23 +193,29 @@ script:
       - delay: 60s
       - light.turn_off: display_backlight
 
-  - id: show_current_image
+  # Karussell laden: beim Blättern der gewählte Eintrag in der Mitte, sonst der laufende
+  - id: load_strip
+    mode: restart
     then:
       - online_image.set_url:
-          id: kk_cover
-          url: !lambda 'return std::string("http://${box}/api/display/strip.jpg?bg=0A1929&v=") + id(k_image_v);'
-      - component.update: kk_cover
+          id: kk_l
+          url: !lambda |-
+            std::string u = "http://${box}/api/display/strip.jpg?bg=0A1929&part=l";
+            if (id(k_browse)) u += str_sprintf("&pos=%d", id(k_pos)); else u += "&v=" + id(k_image_v);
+            if (id(k_up)) u += "&up=1";
+            return u;
+      - online_image.set_url:
+          id: kk_r
+          url: !lambda |-
+            std::string u = "http://${box}/api/display/strip.jpg?bg=0A1929&part=r";
+            if (id(k_browse)) u += str_sprintf("&pos=%d", id(k_pos)); else u += "&v=" + id(k_image_v);
+            if (id(k_up)) u += "&up=1";
+            return u;
+      - component.update: kk_l      # die rechte Hälfte folgt, sobald die linke da ist
 
-  # Anzeige „Läuft“
-  - id: refresh_ui
-    mode: queued
+  - id: show_current_image
     then:
-      - lvgl.label.update: { id: lbl_top, text: !lambda 'return id(k_top);' }
-      - lvgl.label.update: { id: lbl_title, text: !lambda 'return id(k_title);' }
-      - lvgl.label.update: { id: lbl_sub, text: !lambda 'return id(k_sub);', text_color: 0x90A4AE }
-      - lvgl.widget.show: [bar_pos, lbl_el, lbl_du]
-      - lvgl.widget.hide: lbl_hint
-      - script.execute: refresh_time
+      - script.execute: load_strip
 
   - id: refresh_time
     then:
@@ -232,18 +224,8 @@ script:
           value: !lambda |-
             if (id(k_duration) <= 0) return 0;
             return (int) (1000.0f * std::min(id(k_elapsed), id(k_duration)) / id(k_duration));
-      - lvgl.label.update:
-          id: lbl_el
-          text: !lambda |-
-            int s = (int) id(k_elapsed);
-            return id(k_duration) > 0 ? str_sprintf("%d:%02d", s / 60, s % 60) : std::string("");
-      - lvgl.label.update:
-          id: lbl_du
-          text: !lambda |-
-            int s = (int) id(k_duration);
-            return s > 0 ? str_sprintf("%d:%02d", s / 60, s % 60) : std::string("");
 
-  # Blättern: dir = +1 weiter, -1 zurück. Die Box liefert Name und Ordner des Eintrags.
+  # Blättern: dir = Schritte (+ weiter, - zurück). Die Box liefert Nummer und Ordner des Eintrags.
   - id: browse
     mode: single
     parameters:
@@ -253,13 +235,15 @@ script:
       - script.execute: backlight_timeout
       - http_request.get:
           url: !lambda |-
-            if (id(k_browse)) return str_sprintf("http://${box}/api/display/browse?pos=%d", id(k_pos) + dir);
-            return str_sprintf("http://${box}/api/display/browse?step=%d", dir);
+            std::string u = id(k_browse) ? str_sprintf("http://${box}/api/display/browse?pos=%d", id(k_pos) + dir)
+                                         : str_sprintf("http://${box}/api/display/browse?step=%d", dir);
+            if (id(k_up)) u += "&up=1";
+            return u;
           capture_response: true
           max_response_buffer_size: 2048
           on_error:
             then:
-              - lvgl.label.update: { id: lbl_sub, text: "Box nicht erreichbar", text_color: 0xFF8A65 }
+              - lvgl.label.update: { id: lbl_info, text: "Box nicht erreichbar" }
           on_response:
             then:
               - lambda: |-
@@ -269,8 +253,6 @@ script:
                     int count = root["count"] | 0;
                     if (count < 1) return true;
                     id(k_pos) = root["pos"] | 0;
-                    id(b_name) = root["name"] | "";
-                    id(b_top) = root["top"] | "";
                     id(b_sub) = root["sub"] | "";
                     id(b_folder) = root["folder"] | "";
                     id(b_ok) = true;
@@ -281,25 +263,17 @@ script:
                     lambda: 'return !id(b_ok);'
                   then:
                     - lvgl.label.update:
-                        id: lbl_sub
-                        text_color: 0xFF8A65
+                        id: lbl_info
                         text: !lambda |-
                           if (response->status_code == 404) return std::string("Bitte zuerst die Box aktualisieren");
-                          return str_sprintf("Blättern geht nicht (Antwort %d)", response->status_code);
+                          return str_sprintf("Geht nicht (Antwort %d)", response->status_code);
               - if:
                   condition:
                     lambda: 'return id(b_ok);'
                   then:
                     - lambda: 'id(k_browse) = true;'
-                    - lvgl.label.update: { id: lbl_top, text: !lambda 'return id(b_top);' }
-                    - lvgl.label.update: { id: lbl_title, text: !lambda 'return id(b_name);' }
-                    - lvgl.label.update: { id: lbl_sub, text: !lambda 'return id(b_sub);', text_color: 0xFF8A65 }
-                    - lvgl.widget.hide: [bar_pos, lbl_el, lbl_du]
-                    - lvgl.widget.show: lbl_hint
-                    - online_image.set_url:
-                        id: kk_cover
-                        url: !lambda 'return str_sprintf("http://${box}/api/display/strip.jpg?bg=0A1929&pos=%d", id(k_pos));'
-                    - component.update: kk_cover
+                    - lvgl.label.update: { id: lbl_info, text: !lambda 'return id(b_sub);' }
+                    - script.execute: load_strip
                     - script.execute: browse_timeout
 
   - id: browse_timeout
@@ -311,11 +285,26 @@ script:
   - id: browse_end
     then:
       - script.stop: browse_timeout
-      - lambda: 'id(k_browse) = false;'
-      - script.execute: refresh_ui
-      - script.execute: show_current_image
+      - lambda: |-
+          id(k_browse) = false;
+          id(k_up) = false;
+      - lvgl.label.update: { id: lbl_info, text: "" }
+      - lvgl.obj.update: { id: btn_up, bg_color: 0x14283A }
+      - script.execute: refresh_time
+      - script.execute: load_strip
 
-  # Cover angetippt: beim Blättern die gezeigte Folge abspielen
+  # Ebene wechseln: Folgen der Serie <-> alle Serien/Hörspiele
+  - id: toggle_level
+    then:
+      - lambda: |-
+          id(k_up) = !id(k_up);
+          id(k_browse) = false;
+      - lvgl.obj.update:
+          id: btn_up
+          bg_color: !lambda 'return id(k_up) ? lv_color_hex(0xFF7043) : lv_color_hex(0x14283A);'
+      - script.execute: { id: browse, dir: 0 }
+
+  # Mitte angetippt: beim Blättern den gezeigten Eintrag abspielen
   - id: cover_tap
     then:
       - if:
@@ -323,12 +312,10 @@ script:
             lambda: 'return id(k_browse) && !id(b_folder).empty();'
           then:
             - mqtt.publish:
-                topic: "${prefix}/cmd/play_folder"
+                topic: "${prefix}/cmd/play_episode"
                 payload: !lambda 'return id(b_folder);'
-            - lvgl.label.update: { id: lbl_sub, text: "wird abgespielt …" }
-            - lvgl.widget.hide: lbl_hint
             - script.stop: browse_timeout
-            - delay: 1500ms
+            - delay: 1200ms
             - script.execute: browse_end
 
 interval:
@@ -340,6 +327,14 @@ interval:
           then:
             - lambda: 'id(k_elapsed) += 1.0f;'
             - script.execute: refresh_time
+  # Fehlt das Bild noch (z. B. Box war beim Start nicht erreichbar), später erneut versuchen
+  - interval: 30s
+    then:
+      - if:
+          condition:
+            lambda: 'return !id(k_browse) && !id(k_have_img);'
+          then:
+            - script.execute: load_strip
 
 font:
   - file: "gfonts://Montserrat@600"
@@ -362,7 +357,7 @@ lvgl:
     - id: st_arrow
       bg_color: 0x14283A
       bg_opa: COVER
-      radius: 14
+      radius: 12
       border_width: 0
       shadow_width: 0
   widgets:
@@ -383,18 +378,15 @@ lvgl:
         on_swipe_right:
           - script.execute: { id: browse, dir: -1 }
         widgets:
-          # Karussell (320 × 100, kommt fertig von der Box)
-          - image:
-              id: cover_img
-              src: kk_cover
-              x: 0
-              y: 4
+          # Karussell (zwei Hälften, kommt fertig von der Box)
+          - image: { id: img_l, src: kk_l, x: 0, y: 4 }
+          - image: { id: img_r, src: kk_r, x: 160, y: 4 }
           # unsichtbare Tippflächen über den fünf Covern
           - obj:
               x: 0
               y: 0
-              width: 44
-              height: 104
+              width: 30
+              height: 148
               radius: 0
               border_width: 0
               bg_opa: TRANSP
@@ -403,10 +395,10 @@ lvgl:
               on_click:
                 - script.execute: { id: browse, dir: -2 }
           - obj:
-              x: 44
+              x: 30
               y: 0
-              width: 64
-              height: 104
+              width: 62
+              height: 148
               radius: 0
               border_width: 0
               bg_opa: TRANSP
@@ -415,10 +407,10 @@ lvgl:
               on_click:
                 - script.execute: { id: browse, dir: -1 }
           - obj:
-              x: 108
+              x: 92
               y: 0
-              width: 104
-              height: 104
+              width: 136
+              height: 148
               radius: 0
               border_width: 0
               bg_opa: TRANSP
@@ -427,10 +419,10 @@ lvgl:
               on_click:
                 - script.execute: cover_tap
           - obj:
-              x: 212
+              x: 228
               y: 0
-              width: 64
-              height: 104
+              width: 62
+              height: 148
               radius: 0
               border_width: 0
               bg_opa: TRANSP
@@ -439,10 +431,10 @@ lvgl:
               on_click:
                 - script.execute: { id: browse, dir: 1 }
           - obj:
-              x: 276
+              x: 290
               y: 0
-              width: 44
-              height: 104
+              width: 30
+              height: 148
               radius: 0
               border_width: 0
               bg_opa: TRANSP
@@ -451,69 +443,13 @@ lvgl:
               on_click:
                 - script.execute: { id: browse, dir: 2 }
 
-          # Pfeile
-          - button:
-              styles: st_arrow
-              x: 6
-              y: 114
-              width: 52
-              height: 86
-              on_click:
-                - script.execute: { id: browse, dir: -1 }
-              widgets:
-                - label: { align: CENTER, text: "", text_font: montserrat_28, text_color: 0xE1F5FE }
-          - button:
-              styles: st_arrow
-              x: 262
-              y: 114
-              width: 52
-              height: 86
-              on_click:
-                - script.execute: { id: browse, dir: 1 }
-              widgets:
-                - label: { align: CENTER, text: "", text_font: montserrat_28, text_color: 0xE1F5FE }
-
-          # Texte zwischen den Pfeilen
-          - label:
-              id: lbl_top
-              x: 64
-              y: 112
-              width: 192
-              text: ""
-              text_align: CENTER
-              long_mode: DOT
-              text_color: 0x6BA3B8
-              text_font: font_12
-          - label:
-              id: lbl_title
-              x: 64
-              y: 130
-              width: 192
-              height: 46
-              text: "Verbinde …"
-              text_align: CENTER
-              long_mode: DOT
-              text_color: 0xE1F5FE
-              text_font: font_18
-          - label:
-              id: lbl_sub
-              x: 64
-              y: 182
-              width: 192
-              text: ""
-              text_align: CENTER
-              long_mode: DOT
-              text_color: 0x90A4AE
-              text_font: font_12
-
-          # Fortschritt (nur bei „Läuft“)
-          - label: { id: lbl_el, x: 10, y: 214, width: 44, text: "", text_color: 0x90A4AE, text_font: font_12 }
+          # Fortschritt
           - bar:
               id: bar_pos
-              x: 56
-              y: 219
-              width: 208
-              height: 6
+              x: 10
+              y: 154
+              width: 300
+              height: 5
               min_value: 0
               max_value: 1000
               value: 0
@@ -522,16 +458,48 @@ lvgl:
               indicator:
                 bg_color: 0xFF7043
                 radius: 3
-          - label: { id: lbl_du, x: 266, y: 214, width: 44, text: "", text_align: RIGHT, text_color: 0x90A4AE, text_font: font_12 }
 
-          # Hinweis (nur beim Blättern)
+          # Position beim Blättern („4 / 37“) und Fehlermeldungen
           - label:
-              id: lbl_hint
-              hidden: true
+              id: lbl_info
               x: 10
-              y: 214
+              y: 166
               width: 300
-              text: "  Mitte antippen zum Abspielen"
+              text: ""
               text_align: CENTER
-              text_color: 0x6BA3B8
-              text_font: montserrat_14
+              long_mode: DOT
+              text_color: 0xFF8A65
+              text_font: font_12
+
+          # Pfeile und Ebenenwechsel
+          - button:
+              styles: st_arrow
+              x: 8
+              y: 190
+              width: 84
+              height: 44
+              on_click:
+                - script.execute: { id: browse, dir: -1 }
+              widgets:
+                - label: { align: CENTER, text: "", text_font: montserrat_20, text_color: 0xE1F5FE }
+          - button:
+              id: btn_up
+              styles: st_arrow
+              x: 124
+              y: 190
+              width: 72
+              height: 44
+              on_click:
+                - script.execute: toggle_level
+              widgets:
+                - label: { align: CENTER, text: "", text_font: montserrat_20, text_color: 0xE1F5FE }
+          - button:
+              styles: st_arrow
+              x: 228
+              y: 190
+              width: 84
+              height: 44
+              on_click:
+                - script.execute: { id: browse, dir: 1 }
+              widgets:
+                - label: { align: CENTER, text: "", text_font: montserrat_20, text_color: 0xE1F5FE }

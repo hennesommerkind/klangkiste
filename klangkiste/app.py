@@ -216,10 +216,11 @@ class Box:
                 q.put_nowait(None)
 
     def display_folder(self):
-        """Laufender Ordner; ohne Wiedergabe der zuletzt gespielte (fürs Blättern am Display)."""
-        f = self.player.state.get("folder")
-        if f:
-            self._display_folder = f
+        """Ordner der laufenden Datei (bei Serien also die Folge, nicht die Serie); ohne Wiedergabe
+        der zuletzt gespielte. Grundlage fürs Blättern am Display."""
+        f = self.player.state.get("file") or ""
+        if self.controller != "spotify" and "://" not in f and "/" in f:
+            self._display_folder = f.rsplit("/", 1)[0]
         return getattr(self, "_display_folder", None)
 
     def publish_state(self):
@@ -427,6 +428,10 @@ class Box:
             self._take_over_from_spotify()
             self.active_card = None
             p.play_folder(str(value).strip("/"), restart=False)
+        elif action == "play_episode":
+            self._take_over_from_spotify()
+            self.active_card = None
+            p.play_episode(value)
         elif action == "play_url":
             self._check_url(value)
             self._take_over_from_spotify()
@@ -744,25 +749,29 @@ async def api_cover(request):
 
 @routes.get("/api/display/browse")
 async def api_display_browse(request):
-    """Eintrag zum Blättern: ?step=±1 ab dem laufenden Ordner oder ?pos=N (läuft im Kreis)."""
+    """Eintrag zum Blättern: ?step=±n ab dem laufenden Ordner oder ?pos=N (läuft im Kreis).
+    ?up=1 blättert eine Ebene höher (die Serien/Hörspiele statt der Folgen)."""
     b = box(request)
     q = request.query
     it = await asyncio.to_thread(display.browse, b.library, b.display_folder(),
-                                 int(q["pos"]) if "pos" in q else None, int(q.get("step", 0)))
+                                 int(q["pos"]) if "pos" in q else None, int(q.get("step", 0)), q.get("up") == "1")
     # Umlaute unverschlüsselt: der Mikrocontroller soll den Text ohne Umwege anzeigen können
     return web.Response(text=json.dumps(it, ensure_ascii=False), content_type="application/json")
 
 
 @routes.get("/api/display/strip.jpg")
 async def api_display_strip(request):
-    """Karussell (320 × 100) fürs Display: ohne pos der laufende Ordner in der Mitte, sonst Eintrag pos."""
+    """Karussell fürs Display: ohne pos der laufende Ordner in der Mitte, sonst Eintrag pos.
+    ?part=l|r liefert die linke/rechte Hälfte (der Mikrocontroller hat wenig Speicher am Stück)."""
     b = box(request)
     q = request.query
     s = b.full_state()
+    browsing = "pos" in q
     try:
-        data = await asyncio.to_thread(display.strip, b.library, b.display_folder() if s.get("file") or "pos" in q else None,
-                                       int(q["pos"]) if "pos" in q else None, q.get("bg", "0A1929"),
-                                       s["spotify"] and "pos" not in q, s.get("title") or "")
+        data = await asyncio.to_thread(display.strip, b.library, b.display_folder() if s.get("file") or browsing else None,
+                                       int(q["pos"]) if browsing else None, q.get("bg", "0A1929"),
+                                       s["spotify"] and not browsing, s.get("title") or "",
+                                       q.get("up") == "1", q.get("part", ""))
     except ImportError:
         raise web.HTTPServiceUnavailable(text="Pillow fehlt – bitte die Box aktualisieren")
     return web.Response(body=data, content_type="image/jpeg", headers={"Cache-Control": "no-cache"})
