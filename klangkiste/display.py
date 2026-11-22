@@ -146,7 +146,7 @@ def strip(library, current, pos=None, bg="0A1929", spotify=False, name=""):
             continue
         tile = _render(library, f"{parent}/{names[(it['pos'] + off) % n]}", size, bg)
         if off:
-            tile = Image.blend(tile, shade.resize(tile.size), 0.45 if abs(off) == 1 else 0.6)
+            tile = Image.blend(tile, shade.resize(tile.size), 0.15 if abs(off) == 1 else 0.3)
         canvas.paste(tile, (x, (STRIP_H - size) // 2))
     return _jpeg(canvas, 82)
 
