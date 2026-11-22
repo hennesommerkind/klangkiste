@@ -15,8 +15,8 @@ import cadquery as cq
 PCB_W, PCB_H, PCB_T = 86.0, 50.0, 1.6
 GLASS_W = 69.2          # Breite des Display-Moduls (so hoch wie die Platine)
 BACK_ROOM = 8.5         # Platz hinter der Platine für Bauteile und Stecker
-USB_FROM_TOP = 16.0     # Mitte der Micro-USB-Buchse ab Oberkante (Buchse sitzt von vorn gesehen links)
-USB_W, USB_H = 13.0, 8.0  # Aussparung für den Stecker (Breite entlang der Kante, Dicke)
+USB_FROM_TOP = 23.0     # Mitte der USB-Buchse ab Oberkante, von Henrik gemessen (Buchse sitzt von vorn gesehen links)
+USB_W, USB_H = 14.0, 8.0  # Aussparung für den Stecker (Breite entlang der Kante, Dicke)
 
 # ---- Gehäuse ----
 GAP = 0.3               # Luft rund um die Platine
