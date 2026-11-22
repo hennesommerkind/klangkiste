@@ -762,7 +762,8 @@ async def api_display_browse(request):
 @routes.get("/api/display/strip.jpg")
 async def api_display_strip(request):
     """Karussell fürs Display: ohne pos der laufende Ordner in der Mitte, sonst Eintrag pos.
-    ?h=120&w=320 bestimmen die Größe, ?n=3 zeigt nur je einen Nachbarn. Speicher im Display: w × h × 2 Bytes."""
+    ?h=120&w=320 bestimmen die Größe, ?n=3 zeigt nur je einen Nachbarn. Speicher im Display: w × h × 2 Bytes.
+    Ohne Figuren (die Cover füllen dann die Kacheln); ?fig=1 zeigt sie."""
     b = box(request)
     q = request.query
     s = b.full_state()
@@ -772,7 +773,7 @@ async def api_display_strip(request):
                                        int(q["pos"]) if browsing else None, q.get("bg", "0A1929"),
                                        s["spotify"] and not browsing, s.get("title") or "",
                                        q.get("up") == "1", int(q.get("h", 100)), int(q.get("w", 320)),
-                                       int(q.get("n", 5)))
+                                       int(q.get("n", 5)), q.get("fig") == "1")
     except ImportError:
         raise web.HTTPServiceUnavailable(text="Pillow fehlt – bitte die Box aktualisieren")
     return web.Response(body=data, content_type="image/jpeg", headers={"Cache-Control": "no-cache"})

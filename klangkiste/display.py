@@ -55,18 +55,18 @@ def _placeholder(Image, ImageDraw, size, name, spotify=False):
     return im
 
 
-def _render(library, folder, size, bg, spotify=False, name=""):
+def _render(library, folder, size, bg, spotify=False, name="", figure=True):
     """Bild (PIL): Cover (abgerundet) links oben, Figur rechts unten halb darüber – wie in der Weboberfläche."""
     from PIL import Image, ImageDraw, ImageOps
 
     size = max(24, min(320, int(size)))
-    key = (image_version(library, folder, spotify), size, bg)
+    key = (image_version(library, folder, spotify), size, bg, figure)
     if key in _cache:
         return _cache[key]
 
     bgc = _hex(bg)
     canvas = Image.new("RGB", (size, size), bgc)
-    c = round(size * 0.86)
+    c = round(size * 0.86) if figure else size     # ohne Figur füllt das Cover die ganze Kachel
 
     cover = None
     if folder and not spotify:
@@ -89,7 +89,7 @@ def _render(library, folder, size, bg, spotify=False, name=""):
     ImageDraw.Draw(mask).rounded_rectangle((0, 0, c - 1, c - 1), radius=round(c * 0.08), fill=255)
     canvas.paste(cover, (0, 0), mask)
 
-    if folder and not spotify:
+    if figure and folder and not spotify:
         fig, v, sc = library.figure_for(folder)
         f = library.figure_file(fig) if fig else None
         if f:
@@ -171,7 +171,8 @@ def browse(library, current, pos=None, step=0, up=False):
             "top": parent.split("/")[-1], "sub": f"{i + 1} / {len(names)}"}
 
 
-def strip(library, current, pos=None, bg="0A1929", spotify=False, name="", up=False, h=100, w=STRIP_W, count=5):
+def strip(library, current, pos=None, bg="0A1929", spotify=False, name="", up=False, h=100, w=STRIP_W, count=5,
+          figure=False):
     """Karussell als ein JPEG (320 × h): in der Mitte groß der gewählte Eintrag, dahinter links und
     rechts je zwei Nachbarn, kleiner und leicht abgedunkelt. Ohne pos steht der laufende Ordner in der Mitte.
     Die Höhe bestimmt das Display – ein ESP32 ohne Zusatzspeicher schafft etwa 100 bis 120."""
@@ -186,16 +187,16 @@ def strip(library, current, pos=None, bg="0A1929", spotify=False, name="", up=Fa
     i = (cur if pos is None else int(pos)) % n if n else 0
     shown = [] if not n else [(off, x, size, f"{parent}/{names[(i + off) % n]}") for off, x, size in layout
                               if not off or abs(off) <= (n - 1) // 2 + (1 if off > 0 and n % 2 == 0 else 0)]
-    key = (bg, h, w, int(count), spotify, current if not n else None, name if spotify else "",
+    key = (bg, h, w, int(count), figure, spotify, current if not n else None, name if spotify else "",
            tuple((off, f, image_version(library, f)) for off, _, _, f in shown))
     data = _strips.get(key)
     if data is None:
         canvas = Image.new("RGB", (w, h), bgc)
         if not n:
             c = layout[-1][2]
-            canvas.paste(_render(library, None if spotify else current, c, bg, spotify, name), (layout[-1][1], 2))
+            canvas.paste(_render(library, None if spotify else current, c, bg, spotify, name, figure), (layout[-1][1], 2))
         for off, x, size, folder in shown:
-            tile = _render(library, folder, size, bg)
+            tile = _render(library, folder, size, bg, figure=figure)
             if off:
                 tile = Image.blend(tile, Image.new("RGB", tile.size, bgc), 0.15 if abs(off) == 1 else 0.3)
             # nur was sich vom Hintergrund abhebt, verdeckt die Nachbarn dahinter
