@@ -127,9 +127,9 @@ def compose(library, folder, size=120, bg="0A1929", spotify=False, name=""):
     return _jpeg(_render(library, folder, size, bg, spotify, name))
 
 
-STRIP_W, STRIP_H = 320, 140
+STRIP_W, STRIP_H = 320, 132
 # (Versatz, x, Kantenlänge) – von außen nach innen gezeichnet, die Mitte liegt obenauf
-STRIP = ((-2, 0, 64), (2, 256, 64), (-1, 30, 98), (1, 192, 98), (0, 92, 136))
+STRIP = ((-2, 0, 60), (2, 260, 60), (-1, 30, 92), (1, 198, 92), (0, 96, 128))
 _strips = {}
 
 
@@ -159,7 +159,7 @@ def browse(library, current, pos=None, step=0, up=False):
 
 
 def strip(library, current, pos=None, bg="0A1929", spotify=False, name="", up=False, part=""):
-    """Karussell als JPEG (320 × 140): in der Mitte groß der gewählte Eintrag, dahinter links und
+    """Karussell als JPEG (320 × 132): in der Mitte groß der gewählte Eintrag, dahinter links und
     rechts je zwei Nachbarn, kleiner und leicht abgedunkelt. Ohne pos steht der laufende Ordner in der Mitte."""
     from PIL import Image
 
@@ -175,7 +175,7 @@ def strip(library, current, pos=None, bg="0A1929", spotify=False, name="", up=Fa
     if canvas is None:
         canvas = Image.new("RGB", (STRIP_W, STRIP_H), bgc)
         if not n:
-            canvas.paste(_render(library, None if spotify else current, 136, bg, spotify, name), (92, 2))
+            canvas.paste(_render(library, None if spotify else current, 128, bg, spotify, name), (96, 2))
         for off, x, size, folder in shown:
             tile = _render(library, folder, size, bg)
             if off:
@@ -186,10 +186,9 @@ def strip(library, current, pos=None, bg="0A1929", spotify=False, name="", up=Fa
         if len(_strips) > 6:
             _strips.clear()
         _strips[key] = canvas
-    if part == "l":
-        canvas = canvas.crop((0, 0, STRIP_W // 2, STRIP_H))
-    elif part == "r":
-        canvas = canvas.crop((STRIP_W // 2, 0, STRIP_W, STRIP_H))
+    if part in ("0", "1", "2", "3"):        # vier Streifen je 80 px: kleine Speicherblöcke für den ESP32
+        x = int(part) * STRIP_W // 4
+        return _jpeg(canvas.crop((x, 0, x + STRIP_W // 4, STRIP_H)), 72)
     return _jpeg(canvas, 82)
 
 

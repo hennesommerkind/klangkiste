@@ -762,7 +762,7 @@ async def api_display_browse(request):
 @routes.get("/api/display/strip.jpg")
 async def api_display_strip(request):
     """Karussell fürs Display: ohne pos der laufende Ordner in der Mitte, sonst Eintrag pos.
-    ?part=l|r liefert die linke/rechte Hälfte (der Mikrocontroller hat wenig Speicher am Stück)."""
+    ?part=0…3 liefert einen der vier 80 px breiten Streifen (der Mikrocontroller hat wenig Speicher am Stück)."""
     b = box(request)
     q = request.query
     s = b.full_state()
