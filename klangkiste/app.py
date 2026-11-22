@@ -215,6 +215,13 @@ class Box:
             with contextlib.suppress(asyncio.QueueFull):
                 q.put_nowait(None)
 
+    def display_folder(self):
+        """Laufender Ordner; ohne Wiedergabe der zuletzt gespielte (fürs Blättern am Display)."""
+        f = self.player.state.get("folder")
+        if f:
+            self._display_folder = f
+        return getattr(self, "_display_folder", None)
+
     def publish_state(self):
         """Zustand an Oberfläche und MQTT (z. B. nach Änderungen an Figur oder Cover)."""
         full = self.full_state()
@@ -735,13 +742,28 @@ async def api_cover(request):
     return web.Response(body=data, content_type=mime or "image/jpeg", headers=headers)
 
 
+@routes.get("/api/display/browse")
+async def api_display_browse(request):
+    """Eintrag zum Blättern: ?step=±1 ab dem laufenden Ordner oder ?pos=N (läuft im Kreis)."""
+    b = box(request)
+    q = request.query
+    it = await asyncio.to_thread(display.browse, b.library, b.display_folder(),
+                                 int(q["pos"]) if "pos" in q else None, int(q.get("step", 0)))
+    # Umlaute unverschlüsselt: der Mikrocontroller soll den Text ohne Umwege anzeigen können
+    return web.Response(text=json.dumps(it, ensure_ascii=False), content_type="application/json")
+
+
 @routes.get("/api/display.jpg")
 async def api_display_image(request):
     """Fertiges Bild (Cover + Figur) für ESP32-Displays. ?size=120&bg=0A1929"""
     b = box(request)
     s = b.full_state()
+    folder = s.get("folder")
+    if "pos" in request.query:      # Bild eines Eintrags beim Blättern
+        it = await asyncio.to_thread(display.browse, b.library, b.display_folder(), int(request.query["pos"]))
+        folder, s = it["folder"] or None, {**s, "spotify": False}
     try:
-        data = await asyncio.to_thread(display.compose, b.library, s.get("folder"),
+        data = await asyncio.to_thread(display.compose, b.library, folder,
                                        int(request.query.get("size", 120)), request.query.get("bg", "0A1929"),
                                        s["spotify"], s.get("title") or "")
     except ImportError:

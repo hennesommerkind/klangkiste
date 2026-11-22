@@ -1,14 +1,14 @@
 # =======================================================================
 # CYD (ESP32-2432S028, 320×240, Touch) als Display für die Klangkiste
 #
-# Daten: MQTT-Thema klangkiste/state (kommt direkt von der Box)
-# Bild:  http://<box>/api/display.jpg – Cover mit Figur, von der Box fertig
-#        zusammengesetzt
-# Tasten: schicken klangkiste/cmd/... an die Box
+# Zeigt, was läuft (Cover mit Figur, Serie, Titel, Folge, Fortschritt).
+# Blättern: Pfeile links/rechts oder wischen – zeigt die anderen Folgen der
+# Serie mit Cover. Cover antippen = diese Folge abspielen. Ohne Bedienung
+# springt die Anzeige nach 15 s zurück.
 #
-# In der secrets.yaml (ESPHome-Dashboard › Secrets) müssen stehen:
-#   wifi_ssid, wifi_password, cyd_heizung__encryption_key,
-#   klangkiste_mqtt_user, klangkiste_mqtt_password
+# Daten: MQTT klangkiste/state · Bilder und Blättern: http://<box>/api/display…
+# Secrets: wifi_ssid, wifi_password, cyd_heizung__encryption_key,
+#          klangkiste_mqtt_user, klangkiste_mqtt_password
 # =======================================================================
 substitutions:
   box: "192.168.178.63"          # Adresse der Klangkiste
@@ -42,16 +42,13 @@ ota:
 
 http_request:
   useragent: esphome/klangkiste-display
-  timeout: 10s
+  timeout: 8s
 
-# -----------------------------------------------------------------------
-# MQTT: Zustand der Box empfangen, Befehle senden
-# -----------------------------------------------------------------------
 mqtt:
   broker: ${broker}
   username: !secret klangkiste_mqtt_user
   password: !secret klangkiste_mqtt_password
-  discovery: false               # das Display selbst kommt über die ESPHome-API nach HA
+  discovery: false
   topic_prefix: klangkiste-display
   log_topic: null
   on_json_message:
@@ -69,11 +66,7 @@ mqtt:
             id(k_playing) = (st == "play");
             id(k_elapsed) = x["elapsed"] | 0.0f;
             id(k_duration) = x["duration"] | 0.0f;
-            id(k_volume) = x["volume"] | 0;
-            int vmax = x["vmax"] | 100;
-            id(k_vmax) = vmax > 0 ? vmax : 100;
 
-            // Zeile über dem Titel: Serie, sonst der Ordner (ohne „Hörspiele/“ bzw. „Musik/“)
             std::string top;
             if (spotify) top = "Spotify";
             else if (!series.empty()) top = series;
@@ -92,18 +85,19 @@ mqtt:
             std::string img = x["image_v"] | "idle";
             id(k_img_changed) = (img != id(k_image_v));
             id(k_image_v) = img;
-        - script.execute: refresh_ui
         - if:
             condition:
-              lambda: 'return id(k_img_changed);'
+              lambda: 'return !id(k_browse);'
             then:
-              - online_image.set_url:
-                  id: kk_cover
-                  url: !lambda 'return std::string("http://${box}/api/display.jpg?size=132&bg=0A1929&v=") + id(k_image_v);'
-              - component.update: kk_cover
-              # neue Figur aufgelegt: Display kurz einschalten
-              - light.turn_on: display_backlight
-              - script.execute: backlight_timeout
+              - script.execute: refresh_ui
+              - if:
+                  condition:
+                    lambda: 'return id(k_img_changed);'
+                  then:
+                    - script.execute: show_current_image
+                    # neue Figur aufgelegt: Display einschalten
+                    - light.turn_on: display_backlight
+                    - script.execute: backlight_timeout
 
 online_image:
   - id: kk_cover
@@ -139,7 +133,12 @@ display:
     dimensions:
       width: 320
       height: 240
-    color_order: bgr
+    color_order: rgb
+    # Helligkeitskurve (Gamma) für dieses Panel, sonst wirken Mitteltöne zu hell
+    init_sequence:
+      - [0x26, 0x01]
+      - [0xE0, 0x00, 0x0C, 0x11, 0x04, 0x11, 0x08, 0x37, 0x89, 0x4C, 0x06, 0x0C, 0x0A, 0x2E, 0x34, 0x0F]
+      - [0xE1, 0x00, 0x0B, 0x11, 0x05, 0x13, 0x09, 0x33, 0x67, 0x48, 0x07, 0x0E, 0x0B, 0x23, 0x33, 0x0F]
     invert_colors: false
     update_interval: never
 
@@ -185,14 +184,19 @@ globals:
   - { id: k_playing, type: bool, initial_value: "false" }
   - { id: k_elapsed, type: float, initial_value: "0" }
   - { id: k_duration, type: float, initial_value: "0" }
-  - { id: k_volume, type: int, initial_value: "0" }
-  - { id: k_vmax, type: int, initial_value: "100" }
   - { id: k_top, type: std::string, initial_value: '""' }
   - { id: k_title, type: std::string, initial_value: '"Verbinde …"' }
   - { id: k_sub, type: std::string, initial_value: '""' }
   - { id: k_image_v, type: std::string, initial_value: '""' }
   - { id: k_img_changed, type: bool, initial_value: "false" }
-  - { id: k_vol_busy, type: bool, initial_value: "false" }
+  # Blättern
+  - { id: k_browse, type: bool, initial_value: "false" }
+  - { id: k_pos, type: int, initial_value: "0" }
+  - { id: b_ok, type: bool, initial_value: "false" }
+  - { id: b_name, type: std::string, initial_value: '""' }
+  - { id: b_top, type: std::string, initial_value: '""' }
+  - { id: b_sub, type: std::string, initial_value: '""' }
+  - { id: b_folder, type: std::string, initial_value: '""' }
 
 script:
   - id: backlight_timeout
@@ -201,22 +205,22 @@ script:
       - delay: 60s
       - light.turn_off: display_backlight
 
+  - id: show_current_image
+    then:
+      - online_image.set_url:
+          id: kk_cover
+          url: !lambda 'return std::string("http://${box}/api/display.jpg?size=132&bg=0A1929&v=") + id(k_image_v);'
+      - component.update: kk_cover
+
+  # Anzeige „Läuft“
   - id: refresh_ui
     mode: queued
     then:
       - lvgl.label.update: { id: lbl_top, text: !lambda 'return id(k_top);' }
       - lvgl.label.update: { id: lbl_title, text: !lambda 'return id(k_title);' }
-      - lvgl.label.update: { id: lbl_sub, text: !lambda 'return id(k_sub);' }
-      - lvgl.label.update:
-          id: lbl_play
-          text: !lambda 'return std::string(id(k_playing) ? "" : "");'
-      - if:
-          condition:
-            lambda: 'return !id(k_vol_busy);'
-          then:
-            - lvgl.slider.update:
-                id: sld_vol
-                value: !lambda 'return (int) roundf(id(k_volume) * 100.0f / id(k_vmax));'
+      - lvgl.label.update: { id: lbl_sub, text: !lambda 'return id(k_sub);', text_color: 0x90A4AE }
+      - lvgl.widget.show: [bar_pos, lbl_el, lbl_du]
+      - lvgl.widget.hide: lbl_hint
       - script.execute: refresh_time
 
   - id: refresh_time
@@ -237,13 +241,87 @@ script:
             int s = (int) id(k_duration);
             return s > 0 ? str_sprintf("%d:%02d", s / 60, s % 60) : std::string("");
 
-# Spielzeit zwischen zwei Meldungen der Box selbst weiterzählen
+  # Blättern: dir = +1 weiter, -1 zurück. Die Box liefert Name und Ordner des Eintrags.
+  - id: browse
+    mode: single
+    parameters:
+      dir: int
+    then:
+      - light.turn_on: display_backlight
+      - script.execute: backlight_timeout
+      - http_request.get:
+          url: !lambda |-
+            if (id(k_browse)) return str_sprintf("http://${box}/api/display/browse?pos=%d", id(k_pos) + dir);
+            return str_sprintf("http://${box}/api/display/browse?step=%d", dir);
+          capture_response: true
+          max_response_buffer_size: 2048
+          on_response:
+            then:
+              - lambda: |-
+                  id(b_ok) = false;
+                  if (response->status_code != 200) return;
+                  json::parse_json(body, [](JsonObject root) -> bool {
+                    int count = root["count"] | 0;
+                    if (count < 1) return true;
+                    id(k_pos) = root["pos"] | 0;
+                    id(b_name) = root["name"] | "";
+                    id(b_top) = root["top"] | "";
+                    id(b_sub) = root["sub"] | "";
+                    id(b_folder) = root["folder"] | "";
+                    id(b_ok) = true;
+                    return true;
+                  });
+              - if:
+                  condition:
+                    lambda: 'return id(b_ok);'
+                  then:
+                    - lambda: 'id(k_browse) = true;'
+                    - lvgl.label.update: { id: lbl_top, text: !lambda 'return id(b_top);' }
+                    - lvgl.label.update: { id: lbl_title, text: !lambda 'return id(b_name);' }
+                    - lvgl.label.update: { id: lbl_sub, text: !lambda 'return id(b_sub);', text_color: 0xFF8A65 }
+                    - lvgl.widget.hide: [bar_pos, lbl_el, lbl_du]
+                    - lvgl.widget.show: lbl_hint
+                    - online_image.set_url:
+                        id: kk_cover
+                        url: !lambda 'return str_sprintf("http://${box}/api/display.jpg?size=132&bg=0A1929&pos=%d", id(k_pos));'
+                    - component.update: kk_cover
+                    - script.execute: browse_timeout
+
+  - id: browse_timeout
+    mode: restart
+    then:
+      - delay: 15s
+      - script.execute: browse_end
+
+  - id: browse_end
+    then:
+      - script.stop: browse_timeout
+      - lambda: 'id(k_browse) = false;'
+      - script.execute: refresh_ui
+      - script.execute: show_current_image
+
+  # Cover angetippt: beim Blättern die gezeigte Folge abspielen
+  - id: cover_tap
+    then:
+      - if:
+          condition:
+            lambda: 'return id(k_browse) && !id(b_folder).empty();'
+          then:
+            - mqtt.publish:
+                topic: "${prefix}/cmd/play_folder"
+                payload: !lambda 'return id(b_folder);'
+            - lvgl.label.update: { id: lbl_sub, text: "wird abgespielt …" }
+            - lvgl.widget.hide: lbl_hint
+            - script.stop: browse_timeout
+            - delay: 1500ms
+            - script.execute: browse_end
+
 interval:
   - interval: 1s
     then:
       - if:
           condition:
-            lambda: 'return id(k_playing);'
+            lambda: 'return id(k_playing) && !id(k_browse);'
           then:
             - lambda: 'id(k_elapsed) += 1.0f;'
             - script.execute: refresh_time
@@ -265,14 +343,15 @@ lvgl:
   displays: my_display
   touchscreens: my_touch
   style_definitions:
-    - id: st_btn
+    - id: st_arrow
       bg_color: 0x14283A
       bg_opa: COVER
-      radius: 12
+      radius: 14
       border_width: 0
       shadow_width: 0
   widgets:
     - obj:
+        id: root
         x: 0
         y: 0
         width: 320
@@ -283,50 +362,85 @@ lvgl:
         bg_color: 0x0A1929
         bg_opa: COVER
         scrollable: false
+        on_swipe_left:
+          - script.execute: { id: browse, dir: 1 }
+        on_swipe_right:
+          - script.execute: { id: browse, dir: -1 }
         widgets:
-          # Cover mit Figur (132×132, kommt fertig von der Box)
+          # Pfeil zurück
+          - button:
+              styles: st_arrow
+              x: 6
+              y: 20
+              width: 76
+              height: 108
+              on_click:
+                - script.execute: { id: browse, dir: -1 }
+              widgets:
+                - label: { align: CENTER, text: "", text_font: montserrat_28, text_color: 0xE1F5FE }
+
+          # Cover mit Figur (132×132, kommt fertig von der Box); antippen = abspielen
           - image:
               id: cover_img
               src: kk_cover
-              x: 8
+              x: 94
               y: 8
+              clickable: true
+              on_click:
+                - script.execute: cover_tap
 
-          # Texte rechts neben dem Cover
+          # Pfeil weiter
+          - button:
+              styles: st_arrow
+              x: 238
+              y: 20
+              width: 76
+              height: 108
+              on_click:
+                - script.execute: { id: browse, dir: 1 }
+              widgets:
+                - label: { align: CENTER, text: "", text_font: montserrat_28, text_color: 0xE1F5FE }
+
+          # Texte unter dem Cover
           - label:
               id: lbl_top
-              x: 150
-              y: 12
-              width: 162
+              x: 10
+              y: 146
+              width: 300
               text: ""
+              text_align: CENTER
               long_mode: DOT
               text_color: 0x6BA3B8
               text_font: font_12
           - label:
               id: lbl_title
-              x: 150
-              y: 32
-              width: 162
-              height: 66
+              x: 10
+              y: 162
+              width: 300
+              height: 24
               text: "Verbinde …"
+              text_align: CENTER
               long_mode: DOT
               text_color: 0xE1F5FE
               text_font: font_18
           - label:
               id: lbl_sub
-              x: 150
-              y: 100
-              width: 162
+              x: 10
+              y: 188
+              width: 300
               text: ""
+              text_align: CENTER
               long_mode: DOT
-              text_color: 0xFF8A65
+              text_color: 0x90A4AE
               text_font: font_12
 
-          # Fortschritt
+          # Fortschritt (nur bei „Läuft“)
+          - label: { id: lbl_el, x: 10, y: 214, width: 44, text: "", text_color: 0x90A4AE, text_font: font_12 }
           - bar:
               id: bar_pos
-              x: 150
-              y: 124
-              width: 162
+              x: 56
+              y: 219
+              width: 208
               height: 6
               min_value: 0
               max_value: 1000
@@ -336,64 +450,16 @@ lvgl:
               indicator:
                 bg_color: 0xFF7043
                 radius: 3
-          - label: { id: lbl_el, x: 150, y: 132, text: "", text_color: 0x90A4AE, text_font: font_12 }
-          - label: { id: lbl_du, x: 262, y: 132, width: 50, text: "", text_align: RIGHT, text_color: 0x90A4AE, text_font: font_12 }
+          - label: { id: lbl_du, x: 266, y: 214, width: 44, text: "", text_align: RIGHT, text_color: 0x90A4AE, text_font: font_12 }
 
-          # Tasten
-          - button:
-              styles: st_btn
-              x: 20
-              y: 152
-              width: 76
-              height: 48
-              on_click:
-                - mqtt.publish: { topic: "${prefix}/cmd/prev", payload: "" }
-              widgets:
-                - label: { align: CENTER, text: "", text_font: montserrat_24, text_color: 0xE1F5FE }
-          - button:
-              styles: st_btn
-              x: 122
-              y: 148
-              width: 76
-              height: 56
-              bg_color: 0xFF7043
-              radius: 28
-              on_click:
-                - mqtt.publish: { topic: "${prefix}/cmd/play_pause", payload: "" }
-              widgets:
-                - label: { id: lbl_play, align: CENTER, text: "", text_font: montserrat_28, text_color: 0xFFFFFF }
-          - button:
-              styles: st_btn
-              x: 224
-              y: 152
-              width: 76
-              height: 48
-              on_click:
-                - mqtt.publish: { topic: "${prefix}/cmd/next", payload: "" }
-              widgets:
-                - label: { align: CENTER, text: "", text_font: montserrat_24, text_color: 0xE1F5FE }
-
-          # Lautstärke
-          - label: { x: 12, y: 210, text: "", text_font: montserrat_18, text_color: 0x90A4AE }
-          - slider:
-              id: sld_vol
-              x: 46
-              y: 216
-              width: 250
-              height: 10
-              min_value: 0
-              max_value: 100
-              value: 0
-              bg_color: 0x1B3A4B
-              indicator:
-                bg_color: 0xFF7043
-              knob:
-                bg_color: 0xFFFFFF
-                pad_all: 4
-              on_press:
-                - lambda: 'id(k_vol_busy) = true;'
-              on_release:
-                - lambda: 'id(k_vol_busy) = false;'
-                - mqtt.publish:
-                    topic: "${prefix}/cmd/volume"
-                    payload: !lambda 'return to_string((int) roundf(x * id(k_vmax) / 100.0f));'
+          # Hinweis (nur beim Blättern)
+          - label:
+              id: lbl_hint
+              hidden: true
+              x: 10
+              y: 214
+              width: 300
+              text: "  Cover antippen zum Abspielen"
+              text_align: CENTER
+              text_color: 0x6BA3B8
+              text_font: montserrat_14

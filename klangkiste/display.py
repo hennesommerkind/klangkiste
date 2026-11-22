@@ -112,3 +112,24 @@ def compose(library, folder, size=120, bg="0A1929", spotify=False, name=""):
         _cache.clear()
     _cache[key] = data
     return data
+
+
+def browse(library, current, pos=None, step=0):
+    """Ein Eintrag zum Blättern am Display: die Geschwister des laufenden Ordners
+    (Folgen einer Serie, sonst die Ordner derselben Ebene), in der Reihenfolge der Oberfläche."""
+    current = (current or "").strip("/")
+    parent = current.rsplit("/", 1)[0] if "/" in current else "Hörspiele"
+    try:
+        names = [d.name for d in library._subdirs(library.path(parent))]
+    except (LibraryError, OSError):
+        names = []
+    if not names:
+        return {"pos": 0, "count": 0, "name": "", "folder": "", "sub": "", "top": ""}
+    leaf = current.rsplit("/", 1)[-1]
+    cur = names.index(leaf) if leaf in names and "/" in current else 0
+    i = (cur + int(step)) if pos is None else int(pos)
+    i %= len(names)
+    series = parent.count("/") >= 1
+    return {"pos": i, "count": len(names), "current": cur, "name": names[i], "folder": f"{parent}/{names[i]}",
+            "top": parent.split("/")[-1],
+            "sub": f"{'Folge ' if series else ''}{i + 1} von {len(names)}"}
