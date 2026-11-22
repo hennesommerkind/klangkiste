@@ -23,7 +23,7 @@ say() { printf '\n\033[1;33m▶ %s\033[0m\n' "$*"; }
 [ "$(id -u)" = 0 ] || { echo "Bitte mit sudo ausführen."; exit 1; }
 export DEBIAN_FRONTEND=noninteractive
 
-PKGS="git curl ca-certificates mpd alsa-utils rclone python3 python3-aiohttp python3-paho-mqtt python3-gpiozero python3-lgpio python3-spidev python3-mutagen"
+PKGS="git curl ca-certificates mpd alsa-utils rclone python3 python3-aiohttp python3-paho-mqtt python3-gpiozero python3-lgpio python3-spidev python3-mutagen python3-pil"
 missing=""
 for p in $PKGS; do dpkg -s "$p" >/dev/null 2>&1 || missing="$missing $p"; done
 if [ -n "$missing" ] || [ "$UPDATE" = 0 ]; then

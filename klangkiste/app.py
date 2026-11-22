@@ -18,6 +18,7 @@ from . import __version__, system
 from .backup import Backup, BackupError
 from .bluetooth import Bluetooth, BluetoothError
 from . import sounds
+from . import display
 from .network import HOTSPOT_IP, Network, NetworkError
 from .buttons import Buttons
 from .config import BUTTON_ACTIONS, BUTTON_PINS, Store
@@ -203,6 +204,7 @@ class Box:
                       "cover_url": sp["cover"] or None})
             if sp["volume"] is not None:
                 s["volume"] = sp["volume"]
+        s["image_v"] = display.image_version(self.library, s.get("folder"), s["spotify"])
         return s
 
     async def close_clients(self, app=None):
@@ -212,6 +214,12 @@ class Box:
         for q in list(self.clients):
             with contextlib.suppress(asyncio.QueueFull):
                 q.put_nowait(None)
+
+    def publish_state(self):
+        """Zustand an Oberfläche und MQTT (z. B. nach Änderungen an Figur oder Cover)."""
+        full = self.full_state()
+        self.emit("state", full)
+        self.mqtt.publish_state(full)
 
     def emit(self, event, data):
         if self.loop:
@@ -727,6 +735,20 @@ async def api_cover(request):
     return web.Response(body=data, content_type=mime or "image/jpeg", headers=headers)
 
 
+@routes.get("/api/display.jpg")
+async def api_display_image(request):
+    """Fertiges Bild (Cover + Figur) für ESP32-Displays. ?size=120&bg=0A1929"""
+    b = box(request)
+    s = b.full_state()
+    try:
+        data = await asyncio.to_thread(display.compose, b.library, s.get("folder"),
+                                       int(request.query.get("size", 120)), request.query.get("bg", "0A1929"),
+                                       s["spotify"], s.get("title") or "")
+    except ImportError:
+        raise web.HTTPServiceUnavailable(text="Pillow fehlt – bitte die Box aktualisieren")
+    return web.Response(body=data, content_type="image/jpeg", headers={"Cache-Control": "no-cache"})
+
+
 @routes.delete("/api/cover")
 async def api_cover_delete(request):
     box(request).library.remove_cover(request.query["folder"])
@@ -761,7 +783,7 @@ async def api_figure_set(request):
         raise ValueError("Das Bild der Figur ist zu groß")
     b = box(request)
     await asyncio.to_thread(b.library.set_figure, request.query["folder"], data)
-    b.emit("state", b.full_state())
+    b.publish_state()
     return ok()
 
 
@@ -770,7 +792,7 @@ async def api_figure_size(request):
     b = box(request)
     body = await request.json()
     scale = await asyncio.to_thread(b.library.set_figure_scale, request.query["folder"], body.get("scale", 1))
-    b.emit("state", b.full_state())
+    b.publish_state()
     return ok({"scale": scale})
 
 
@@ -778,7 +800,7 @@ async def api_figure_size(request):
 async def api_figure_delete(request):
     b = box(request)
     await asyncio.to_thread(b.library.remove_figure, request.query["folder"])
-    b.emit("state", b.full_state())
+    b.publish_state()
     return ok()
 
 

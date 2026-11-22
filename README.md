@@ -133,6 +133,9 @@ Unterspannung, Abbrüche und die Namensauflösung in einer Ausgabe (ohne Kennwö
 - Updates: Einstellungen › System › „Jetzt aktualisieren“ startet `klangkiste-update.service`
   (root), der `/opt/klangkiste` aus GitHub aktualisiert und `install.sh --update` ausführt.
   Das Programmverzeichnis gehört root, der Dienst `klangkiste` kann seinen Code nicht ändern.
+- Externes Display: `GET /api/display.jpg?size=132&bg=0A1929` liefert Cover mit Figur als JPEG,
+  MQTT `klangkiste/state` enthält `image_v` (ändert sich mit dem Bild). Beispiel für ein
+  ESP32-CYD mit ESPHome/LVGL: `extras/esphome/klangkiste-display-cyd.yaml`
 - Test ohne Hardware: `python3 tests/fake_mpd.py /tmp/kk/music 6611 &`,
   `python3 tests/fake_librespot.py 3699 &`, für Kopfhörer `PATH=tests/fakebin:$PATH` und
   `python3 -m klangkiste --mock --data /tmp/kk --port 8099 --mpd-port 6611 --spotify-url http://127.0.0.1:3699`

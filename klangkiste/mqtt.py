@@ -91,7 +91,9 @@ class Mqtt:
     def publish_state(self, state):
         if self.client and self.connected:
             s = {k: state.get(k) for k in ("state", "volume", "title", "artist", "album", "folder",
-                                           "track", "tracks", "duration", "stream", "card", "headphones")}
+                                           "track", "tracks", "duration", "stream", "card", "headphones",
+                                           "elapsed", "episode", "episodes", "vmax", "spotify", "image_v")}
+            s["series"] = (state.get("folder") or "").split("/")[1] if (state.get("folder") or "").count("/") >= 2 else ""
             s["stream"] = "ON" if s.get("stream") else "OFF"
             self.client.publish(f"{self.base}/state", json.dumps(s, ensure_ascii=False), retain=True)
 
