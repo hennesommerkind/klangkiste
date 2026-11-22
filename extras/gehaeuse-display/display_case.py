@@ -15,12 +15,19 @@ import cadquery as cq
 PCB_W, PCB_H, PCB_T = 86.0, 50.0, 1.6
 GLASS_W = 69.2          # Breite des Display-Moduls (so hoch wie die Platine)
 BACK_ROOM = 8.5         # Platz hinter der Platine für Bauteile und Stecker
-USB_FROM_TOP = 23.0     # Mitte der USB-Buchse ab Oberkante, von Henrik gemessen (Buchse sitzt von vorn gesehen links)
-USB_W, USB_H = 14.0, 8.0  # Aussparung für den Stecker (Breite entlang der Kante, Dicke)
+USB_TOP, USB_BOTTOM = 9.5, 29.5   # Kerbe für die Stecker, ab Oberkante der Platine: Micro-USB (Mitte ca. 16 mm,
+                                  # der wird für den Strom gebraucht) und USB-C darunter (Mitte 23 mm, gemessen)
+# Display: sichtbar bleibt nur die Bildfläche, der Rahmen überdeckt den schwarzen Rand des Moduls
+ACTIVE_W, ACTIVE_H = 57.6, 43.2
+ACTIVE_LEFT = 9.0       # Abstand Bildfläche – linke Modulkante, von vorn gesehen (USB-Seite); rechts bleiben ca. 2,5 mm
+WINDOW_MARGIN = 1.0     # so viel Rand bleibt rund um die Bildfläche offen
+MODULE_T = 4.4          # Dicke des Display-Moduls über der Platine (geschätzt – bitte nachmessen)
+LIP = 1.2               # Dicke der Blende über dem Displayrand
+LIP_GAP = 0.4           # Luft zwischen Blende und Glas, damit der Touch nicht dauernd gedrückt wird
 
 # ---- Gehäuse ----
 GAP = 0.3               # Luft rund um die Platine
-FRONT = 4.0             # Dicke der Sichtseite neben dem Display (Display schaut durch)
+FRONT = LIP + MODULE_T + LIP_GAP   # Sichtseite bis zur Auflage der Platine
 OUT_W, OUT_H, R = 100.0, 62.0, 6.0
 COVER_T = 3.0
 SCREW = (46.3, 27.3)    # 4 × M3 × 12 Senkkopf von hinten
@@ -58,17 +65,27 @@ def frame():
     # Platinentasche und Durchblick für das Display
     body = body.cut(cq.Workplane("XY").workplane(offset=FRONT).rect(PCB_W + 2 * GAP, PCB_H + 2 * GAP)
                     .extrude(DEPTH))
-    body = body.cut(cq.Workplane("XY").rect(GLASS_W + 2.3, PCB_H + 2 * GAP).extrude(FRONT))
+    # Tasche für das Display-Modul hinter der Blende
+    body = body.cut(cq.Workplane("XY").workplane(offset=LIP).rect(GLASS_W + 1.4, PCB_H + 2 * GAP).extrude(FRONT))
+    # Fenster nur über der Bildfläche; von vorn gesehen sitzt sie nach rechts versetzt (= −x, weil z nach hinten zeigt)
+    shift = ACTIVE_LEFT + ACTIVE_W / 2 - GLASS_W / 2
+    win = (cq.Workplane("XY").center(-shift, 0).rect(ACTIVE_W + 2 * WINDOW_MARGIN, ACTIVE_H + 2 * WINDOW_MARGIN)
+           .extrude(LIP).edges("|Z").fillet(1.5))
+    body = body.cut(win)
+    # Fase außen am Fenster
+    body = body.cut(cq.Workplane("XY").center(-shift, 0)
+                    .rect(ACTIVE_W + 2 * WINDOW_MARGIN + 1.6, ACTIVE_H + 2 * WINDOW_MARGIN + 1.6)
+                    .workplane(offset=0.8).rect(ACTIVE_W + 2 * WINDOW_MARGIN, ACTIVE_H + 2 * WINDOW_MARGIN).loft())
     # Schraublöcher (Kernloch für M3, von hinten)
     for sx in (-1, 1):
         for sy in (-1, 1):
             body = body.cut(cq.Workplane("XY").workplane(offset=DEPTH - 10.5)
                             .center(sx * SCREW[0], sy * SCREW[1]).circle(1.3).extrude(11))
     # USB: Kerbe in der von vorn gesehen linken Wand (= +x, weil z nach hinten zeigt), nach hinten offen
-    uy = PCB_H / 2 - USB_FROM_TOP
+    uy = PCB_H / 2 - (USB_TOP + USB_BOTTOM) / 2
     z0 = FRONT + PCB_T - 2.6
     body = body.cut(cq.Workplane("XY").workplane(offset=z0)
-                    .center((OUT_W / 2 + PCB_W / 2) / 2 + 1, uy).rect(OUT_W / 2 - PCB_W / 2 + 4, USB_W)
+                    .center((OUT_W / 2 + PCB_W / 2) / 2 + 1, uy).rect(OUT_W / 2 - PCB_W / 2 + 4, USB_BOTTOM - USB_TOP)
                     .extrude(DEPTH))
     if OWL:
         # Flügelbögen neben dem Display, 0,5 mm tief graviert
