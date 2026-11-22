@@ -187,11 +187,12 @@ class Box:
         s.update({"card": self.active_card, "spotify": False, "cover_url": None,
                   "controller": self.controller, "name": self.store.config["name"],
                   "update": bool(self.update_info.get("available")), "vmax": self.player.vmax(),
-                  "figure": None})
+                  "figure": None, "figure_scale": 1.0})
         if s.get("folder") and self.controller != "spotify":
-            fig, v = self.library.figure_for(s["folder"])
+            fig, v, sc = self.library.figure_for(s["folder"])
             if fig:
                 s["figure"] = f"/api/figure?folder={quote(fig)}&v={v}"
+                s["figure_scale"] = sc
         if self.controller == "spotify":
             sp = self.spotify.info()
             s.update({"headphones": self.bluetooth.connected,
@@ -764,6 +765,15 @@ async def api_figure_set(request):
     return ok()
 
 
+@routes.post("/api/figure/size")
+async def api_figure_size(request):
+    b = box(request)
+    body = await request.json()
+    scale = await asyncio.to_thread(b.library.set_figure_scale, request.query["folder"], body.get("scale", 1))
+    b.emit("state", b.full_state())
+    return ok({"scale": scale})
+
+
 @routes.delete("/api/figure")
 async def api_figure_delete(request):
     b = box(request)
@@ -803,6 +813,7 @@ async def api_cards(request):
                 d = b.library.path(c["target"])
                 c["missing"] = not d.is_dir()
                 c["figure_v"] = 0 if c["missing"] else b.library._figure_v(d)
+                c["figure_s"] = b.library._figure_s(d) if c["figure_v"] else 1.0
             except LibraryError:
                 c["missing"] = True
     cards.sort(key=lambda c: (c.get("type", "folder"), str(c.get("target", "")).lower()))
