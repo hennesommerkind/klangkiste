@@ -209,7 +209,7 @@ script:
       - lvgl.label.update: { id: lbl_sub, text: !lambda 'return id(k_sub);' }
       - lvgl.label.update:
           id: lbl_play
-          text: !lambda 'return id(k_playing) ? "" : "";'
+          text: !lambda 'return std::string(id(k_playing) ? "" : "");'
       - if:
           condition:
             lambda: 'return !id(k_vol_busy);'
