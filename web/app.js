@@ -51,7 +51,11 @@ function initials(name) {
   const l = String(name).split("/").pop().trim();
   const m = l.match(/^(Folge|Teil|Band|Episode|Kapitel|CD|Nr\.?)\s*(\d+)/i) || l.match(/^(\d+)\b/);
   if (m) return m[m.length - 1];
-  const p = l.split(/\s+/); return ((p[0]?.[0] || "♪") + (p[1]?.[0] || "")).toUpperCase();
+  // Anfangsbuchstaben der ersten beiden echten Wörter: „Ruthe - Das Klo“ → RK, „Jarne & Ole“ → JO
+  const words = l.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  const skip = /^(der|die|das|den|dem|des|ein|eine|einen|und|oder|im|in|am|an|auf|mit|von|vom|zu|zum|zur|the|and|of|a)$/i;
+  const p = words.filter((w) => !skip.test(w)); const q = p.length ? p : words;
+  return ((q[0]?.[0] || "♪") + (q[1]?.[0] || "")).toUpperCase();
 }
 function cover(folder, hasImg = true, v = "") {
   if (folder == null || folder === "") return `<div class="cover" style="--c:var(--surface-2);color:var(--muted)">${ICON.music.replace("<svg", '<svg width="40%"')}</div>`;
@@ -89,12 +93,17 @@ function prompt2(title, label, value = "", okLabel = "Speichern") {
 // ---------- Navigation ----------
 function go(view, folder = null) {
   S.view = view; S.folder = folder;
+  const seq = S.seq = (S.seq || 0) + 1;
+  // Antwortet die Box langsam, steht nicht der alte Inhalt unter dem neuen Menüpunkt
+  setTimeout(() => { if (S.seq === seq && S.shown !== seq) main.innerHTML = `<p class="muted loading">Lädt …</p>`; }, 250);
   $$("#nav button").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
   history.replaceState(null, "", "#" + view + (folder ? "/" + encodeURIComponent(folder) : ""));
   render(); window.scrollTo(0, 0);
 }
 $$("#nav button").forEach((b) => b.onclick = () => go(b.dataset.view));
-function render() { ({ now: viewNow, hoerspiele: S.folder ? viewFolder : viewMusic, musik: S.folder ? viewFolder : viewMusic, cards: viewCards, settings: viewSettings }[S.view])(); renderMini(); }
+// Gehört die Antwort noch zur gezeigten Ansicht? (sonst hat der Nutzer inzwischen woanders hingeklickt)
+const fresh = (seq) => seq === (S.seq || 0) && ((S.shown = seq), true);
+function render() { if (S.view === "now") S.shown = S.seq; ({ now: viewNow, hoerspiele: S.folder ? viewFolder : viewMusic, musik: S.folder ? viewFolder : viewMusic, cards: viewCards, settings: viewSettings }[S.view])(); renderMini(); }
 
 // ---------- Live-Status ----------
 function elapsedNow() { const s = S.state; return s.state === "play" ? Math.min(s.duration || 1e9, s.elapsed + (performance.now() - S.synced) / 1000) : s.elapsed || 0; }
@@ -124,7 +133,10 @@ function connect() {
 setInterval(() => { if (S.view === "now" && S.state.state === "play") tick(); }, 500);
 setInterval(run(async () => { if (!document.hidden && S.state.state === "play") { S.state = await api("/api/state"); S.synced = performance.now(); } }), 15000);
 
-function updateDot() { $('#nav button[data-view="settings"]').classList.toggle("dot", !!S.state.update); }
+function updateDot() {
+  const b = $('#nav button[data-view="settings"]'), up = !!S.state.update;
+  b.classList.toggle("dot", up); b.title = up ? "Update verfügbar" : ""; b.setAttribute("aria-label", up ? "Einstellungen – Update verfügbar" : "Einstellungen");
+}
 function nowCover(s, idle) {
   if (s.spotify) return `<div class="cover spotify">${s.cover_url ? `<img alt="" src="${esc(s.cover_url)}" onerror="this.remove()">` : ""}<svg viewBox="0 0 24 24" width="38%" fill="currentColor"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm4.6 14.4a.6.6 0 0 1-.9.2c-2.4-1.5-5.4-1.8-9-1a.6.6 0 1 1-.3-1.2c3.9-.9 7.2-.5 9.9 1.1.3.2.4.6.3.9Zm1.2-2.7a.8.8 0 0 1-1 .3c-2.8-1.7-7-2.2-10.3-1.2a.8.8 0 1 1-.4-1.5c3.8-1.1 8.4-.6 11.5 1.3.3.2.4.7.2 1.1Zm.1-2.8C14.6 9 9.2 8.8 6.1 9.7a.9.9 0 1 1-.5-1.8c3.6-1.1 9.5-.9 13.3 1.3a.9.9 0 0 1-1 1.7Z"/></svg></div>`;
   return `<div class="figwrap${s.figure && !idle ? " has-fig" : ""}">${cover(idle ? null : s.folder ?? "Radio", s.folder != null)}${idle ? "" : figImg(s.figure, s.figure_scale)}</div>`;
@@ -314,6 +326,7 @@ function viewNow() {
         <button aria-label="Weiter" data-a="next">${ICON.next}</button>
       </div>
       <div class="vol">${ICON.vol}<input type="range" id="np-vol" min="0" max="100" aria-label="Lautstärke"><b id="np-volv"></b></div>
+      <button id="np-mute" class="mutehint" hidden>Stumm – antippen für Ton</button>
       <p id="np-hp" class="small" hidden style="margin:8px 0 0;color:var(--accent);font-weight:700">${ICON.headphones} Ton über Kopfhörer</p>
       ${s.spotify ? `<p class="muted small" style="margin-top:14px">Läuft über Spotify. Die Knöpfe an der Box steuern jetzt Spotify; eine aufgelegte Figur übernimmt wieder.</p>` : ""}
       <label class="switch" style="margin-top:14px" ${s.spotify ? "hidden" : ""}><span><b>Im Haus streamen</b><br><span class="muted small">Stellt den Ton für MusicCast bereit</span></span><input type="checkbox" id="np-stream"></label>
@@ -324,6 +337,7 @@ function viewNow() {
   vol.oninput = () => { $("#np-volv").textContent = vol.value; vol.style.setProperty("--p", (vol.value / vol.max * 100) + "%"); S.volBusy = Date.now(); };
   vol.onchange = () => act("volume", +vol.value);
   $("#np-stream").onchange = (e) => act("stream", e.target.checked);
+  $("#np-mute").onclick = () => act("mute");
   $("#np-prog").onclick = (e) => { const r = e.currentTarget.getBoundingClientRect(); if (S.state.duration) act("seek", (e.clientX - r.left) / r.width * S.state.duration); };
   updateNow(); renderQueue();
 }
@@ -338,6 +352,7 @@ function updateNow() {
   if (!S.volBusy || Date.now() - S.volBusy > 1500) { vol.max = (s.headphones ? S.cfg?.bluetooth?.volume_max : S.cfg?.audio.volume_max) || 100; vol.value = s.volume; $("#np-volv").textContent = s.volume; vol.style.setProperty("--p", (s.volume / vol.max * 100) + "%"); }
   $("#np-stream").checked = !!s.stream;
   $("#np-hp").hidden = !s.headphones;
+  $("#np-mute").hidden = idle || s.volume > 0 || (S.volBusy && Date.now() - S.volBusy < 1500);
   $("#np-du").textContent = fmt(s.duration);
   if (S.queueEp !== s.episode && $("#np-queue .ep")) renderQueue();     // andere Folge: Gruppen neu aufklappen
   else $$("#np-queue li[data-i]").forEach((li) => li.classList.toggle("current", +li.dataset.i === s.track - 1));
@@ -409,7 +424,9 @@ const goCat = (c) => go(viewOfCat(c));
 const goUp = (p) => { const up = p.split("/").slice(0, -1).join("/"); CATS.includes(up) || !up ? goCat(up || catOf(p)) : goFolder(up); };
 
 const viewMusic = run(async () => {
+  const seq = S.seq || 0;
   const d = await api("/api/library"); S.lib = d;
+  if (!fresh(seq)) return;
   const cat = S.view === "musik" ? "Musik" : "Hörspiele";
   const list = childrenOf(d.folders, cat);
   const loose = cat === "Hörspiele" ? d.folders.filter((f) => !f.name.includes("/") && !CATS.includes(f.name)) : [];
@@ -549,10 +566,11 @@ async function squareJpeg(file, px = 800) {
 }
 
 const viewFolder = run(async () => {
-  const name = S.folder;
+  const name = S.folder, seq = S.seq || 0;
   let tracks, lib;
   try { [tracks, lib] = await Promise.all([api("/api/library/tracks?folder=" + encodeURIComponent(name)), api("/api/library")]); }
-  catch (e) { toast(e.message, "error"); return goCat(catOf(name) || "Hörspiele"); }
+  catch (e) { if (seq !== (S.seq || 0)) return; toast(e.message, "error"); return goCat(catOf(name) || "Hörspiele"); }
+  if (!fresh(seq)) return;
   const f = lib.folders.find((x) => x.name === name) || { cards: [], cover: false, cover_v: 0, total_tracks: tracks.length, subfolders: 0 };
   const subs = childrenOf(lib.folders, name);
   const cat = catOf(name), music = cat === "Musik";
@@ -757,7 +775,9 @@ const cardDialog = run(async (id = null, card = null) => {
   });
 });
 const viewCards = run(async () => {
+  const seq = S.seq || 0;
   const d = await api("/api/cards");
+  if (!fresh(seq)) return;
   const label = (c) => c.type === "command" ? "Befehl: " + (CMD[c.target] || c.target) : c.type === "url" ? (c.label || c.target) : pretty(c.target);
   main.innerHTML = `<div class="head"><div><h1>Karten</h1><div class="status-line" style="margin:4px 0 0"><span class="pill ${d.reader_ok ? "ok" : "bad"}">${d.reader_ok ? "Kartenleser bereit" : "Kartenleser nicht bereit"}</span><span class="muted small">${d.cards.length} Karten</span></div></div>
     <button class="btn primary" id="add">${ICON.plus} Neue Karte</button></div>
@@ -766,7 +786,7 @@ const viewCards = run(async () => {
     <div class="card">${d.cards.length ? `<ul class="list">${d.cards.map((c, i) => `<li>
       <div style="width:46px;flex:none" class="figwrap${c.figure_v ? " has-fig mini" : ""}">${c.type === "folder" || !c.type ? cover(c.target, !c.missing) + figImg(figUrl(c.target, c.figure_v), c.figure_s) : `<div class="cover" style="--c:var(--surface-2);color:var(--muted);font-size:1.2rem">${c.type === "url" ? "📻" : "⚙"}</div>`}</div>
       <div class="grow"><b>${esc(label(c))}</b><span>Karte ${esc(c.id)}${c.shuffle ? " · Zufall" : ""} ${c.missing ? '<span class="pill bad">Ordner fehlt</span>' : ""}</span></div>
-      ${(c.type === "folder" || !c.type) && !c.missing ? `<button class="iconbtn" data-g="${i}" aria-label="3D-Figur" title="3D-Figur">${FIGICON}</button>` : ""}<button class="iconbtn" data-e="${i}" aria-label="Bearbeiten">${ICON.edit}</button><button class="iconbtn" data-d="${i}" aria-label="Karte löschen">${ICON.trash}</button></li>`).join("")}</ul>`
+      ${(c.type === "folder" || !c.type) && !c.missing ? `<button class="iconbtn lbl" data-g="${i}" aria-label="Figur fürs Cover" title="Figur fürs Cover">${FIGICON}<span>Figur</span></button>` : ""}<button class="iconbtn lbl" data-e="${i}" aria-label="Karte bearbeiten" title="Karte bearbeiten">${ICON.edit}<span>Ändern</span></button><button class="iconbtn apart" data-d="${i}" aria-label="Karte löschen" title="Karte löschen">${ICON.trash}</button></li>`).join("")}</ul>`
       : `<div class="empty" style="padding:24px">${ICON.music}<p>Noch keine Karten. Tippe auf „Neue Karte“ oder leg einfach eine Karte auf die Box.</p></div>`}</div>`;
   $("#add").onclick = () => cardDialog();
   if ($("#cq")) $("#cq").oninput = (e) => { const terms = norm(e.target.value).trim().split(/\s+/).filter(Boolean); $$(".card .list > li").forEach((li, i) => { const c = d.cards[i]; li.hidden = terms.length > 0 && !terms.every((t) => norm(label(c) + " " + c.id).includes(t)); }); };
@@ -778,7 +798,9 @@ const viewCards = run(async () => {
 // ---------- Einstellungen ----------
 const DAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
 const viewSettings = run(async () => {
+  const seq = S.seq || 0;
   const [c, sys, bk] = await Promise.all([api("/api/config"), api("/api/system"), api("/api/backup/status")]);
+  if (!fresh(seq)) return;
   const cfg = c.config; S.cfg = cfg; S.backup = bk; S.sys = sys;
   const open = S.openSection || "general";
   const sec = (id, title, body, extra = "") => `<details class="card" data-s="${id}" ${open === id ? "open" : ""}><summary><span>${title} ${extra}</span></summary>${body}</details>`;
@@ -798,7 +820,7 @@ const viewSettings = run(async () => {
     </div>
     ${sw("g-resume", "Hörspiele fortsetzen", cfg.audio.resume, "Hörspiele gehen an der letzten Stelle weiter, auch nach einer anderen Karte. Musik beginnt immer von vorn.")}
     <p class="small muted">Beim Einschalten spielt die Box einen kurzen Ton, sobald sie bereit ist. Ihre Adresse sagt sie, wenn du Play/Pause drei Sekunden gedrückt hältst – und nachdem du ihr über das eigene Not-WLAN ein neues WLAN beigebracht hast.</p>
-    <div class="actions row" style="margin-top:12px"><button class="btn primary" id="g-save">Speichern</button></div>`)}
+    <div class="actions row" style="margin-top:12px"><span class="muted small" style="margin-right:auto">Regler und Schalter hier gelten erst nach „Speichern“.</span><button class="btn primary" id="g-save">Speichern</button></div>`)}
   ${sec("buttons", "Knöpfe", `<p class="muted small">Du musst die Box nicht öffnen: „Knopf anlernen“ erkennt selbst, an welchem Anschluss ein Knopf hängt.</p>
     <ul class="list" id="b-list"></ul>
     <div class="row wrap" style="margin-top:14px"><button class="btn" id="b-learn">${ICON.plus} Knopf anlernen</button><button class="btn primary" id="b-save">Speichern</button></div>
@@ -1121,3 +1143,6 @@ function paintBackup() {
   window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); S.installPrompt = e; if ($("#app-inst")) paintInstall(); });
   window.addEventListener("appinstalled", () => { S.installPrompt = null; toast("Klangkiste ist jetzt als App installiert"); if ($("#app-inst")) paintInstall(); });
 })();
+
+// Schalter für Vorleseprogramme als Schalter auszeichnen (nicht nur als Kästchen)
+new MutationObserver(() => $$(".switch input[type=checkbox]:not([role])").forEach((i) => i.setAttribute("role", "switch"))).observe(document.body, { childList: true, subtree: true });
