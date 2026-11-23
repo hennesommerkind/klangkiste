@@ -143,6 +143,23 @@ def main():
     assert r["episodes"] == 2 and r["removed"] == [] and (h / "Conni" / "CD 1" / "Booklet.txt").exists(), r
     assert lib.all_files("Hörspiele/Conni")[0].endswith("Conni backt/Conni backt - Teil 1.mp3")
 
+    # 8) Titel mit eigenem Bild in den Tags: die Bilddatei des Serienordners wird NICHT in die Folgen kopiert
+    #    (sie hätte Vorrang und würde das eigene Cover jeder Folge verdecken)
+    from mutagen.id3 import APIC, ID3
+    for st in ("Als Pirat", "Als Ritter"):
+        f = h / "Benjamin Blümchen" / f"{st}.mp3"
+        mp3(f, tmp, st, None, 1200)
+        tags = ID3(f)
+        tags.add(APIC(encoding=3, mime="image/jpeg", type=3, desc="Cover", data=b"\xff\xd8" + st.encode() + b"\xff\xd9"))
+        tags.save(f)
+    mp3(h / "Benjamin Blümchen" / "Ohne Bild.mp3", tmp, "Ohne Bild", None, 1200)
+    (h / "Benjamin Blümchen" / "cover.jpg").write_bytes(b"\xff\xd8SERIE\xff\xd9")
+    r = episodes.Planner(lib, "Hörspiele/Benjamin Blümchen").apply()
+    assert r["episodes"] == 3, r
+    assert not (h / "Benjamin Blümchen" / "Als Pirat" / "cover.jpg").exists()
+    assert b"Als Pirat" in lib.cover_bytes("Hörspiele/Benjamin Blümchen/Als Pirat")[0]
+    assert (h / "Benjamin Blümchen" / "Ohne Bild" / "cover.jpg").exists()      # ohne Tag-Bild erbt die Folge das Serienbild
+
     # „_Bitte prüfen“ läuft nicht mit der Serie mit
     assert not any(episodes.REVIEW in f for f in lib.all_files("Hörspiele/Super Wings"))
 

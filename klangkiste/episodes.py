@@ -240,16 +240,16 @@ class Planner:
         if not self.moves and not self.review:
             return {"moved": 0, "episodes": 0, "removed": [], "review": 0, "series": self.series_rel}
         old_order = [d.name for d in lib._subdirs(series)]
-        made, track_order = [], {}
+        made, track_order, covers = [], {}, {}
         plan = [(src, name) for src, name in self.moves] + [(lib.path(r["file"]), REVIEW) for r in self.review]
         for src, name in plan:
             dst_dir = series / clean_name(name)
             if not dst_dir.exists():
                 dst_dir.mkdir()
                 made.append(name)
-                cover = lib.find_cover(src.parent)       # Bilddatei des Albums mitnehmen
+                cover = lib.find_cover(src.parent)
                 if cover and name != REVIEW:
-                    shutil.copy2(cover, dst_dir / cover.name)
+                    covers[dst_dir] = cover
             dst = dst_dir / src.name
             n = 1
             while dst.exists():
@@ -257,6 +257,8 @@ class Planner:
                 dst = dst_dir / f"{src.stem} ({n}){src.suffix}"
             os.replace(src, dst)
             track_order.setdefault(dst_dir, []).append(dst.name)
+        for d, cover in covers.items():
+            _inherit_cover(lib, d, cover)
         for d, names in track_order.items():          # Reihenfolge wie vorher, falls die Namen sie nicht hergeben
             if d.name != REVIEW and names != sorted(names, key=_natural):
                 existing = [f.name for f in lib._audio_files(d) if f.name not in names]
@@ -289,6 +291,18 @@ class Planner:
         lib._write_order(series, data)
         return {"moved": len(plan), "episodes": len([m for m in made if m != REVIEW]), "removed": removed,
                 "review": len(self.review), "series": self.series_rel}
+
+
+def _inherit_cover(library, d, cover):
+    """Gibt einer neuen Folge die Bilddatei ihres bisherigen Ordners mit – aber nur, wenn ihre Titel kein
+    eigenes Bild in den Tags tragen. Eine Bilddatei im Ordner hat Vorrang vor den Tags und würde das
+    eigene Cover der Folge sonst verdecken."""
+    try:
+        if library.find_cover(d) or library.cover_bytes(library.rel(d))[0] is not None:
+            return
+        shutil.copy2(cover, d / cover.name)
+    except OSError:
+        pass
 
 
 def _dur(s):
@@ -331,10 +345,9 @@ def merge(library, folders):
                 dst = target / f"{d.name} - {f.stem} ({n}){f.suffix}"
             os.replace(f, dst)
             names.append(dst.name)
-        if not library.find_cover(target):
-            cover = library.find_cover(d)
-            if cover:
-                os.replace(cover, target / cover.name)
+        cover = library.find_cover(d)
+        if cover:
+            _inherit_cover(library, target, cover)
         removed.append(library.rel(d))
         shutil.rmtree(d)
     data = library._order(target)
@@ -358,11 +371,11 @@ def split(library, folder, files, name):
         raise LibraryError("Diesen Namen gibt es schon")
     siblings = [x.name for x in library._subdirs(d.parent)]
     dst.mkdir()
-    cover = library.find_cover(d)
-    if cover:
-        shutil.copy2(cover, dst / cover.name)
     for f in chosen:
         os.replace(f, dst / f.name)
+    cover = library.find_cover(d)
+    if cover:
+        _inherit_cover(library, dst, cover)
     names = [f.name for f in chosen]
     if names != sorted(names, key=_natural):
         library._write_order(dst, {"tracks": names})
