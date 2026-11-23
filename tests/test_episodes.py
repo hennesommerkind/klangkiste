@@ -98,11 +98,23 @@ def main():
     for i, t in enumerate(("Der Hexenbesen", "Kartoffelbrei", "Die Kuh im Schlafzimmer"), 1):
         mp3(h / "Bibi" / "Sammlung" / f"{i:02d} - {t}.mp3", tmp, None, None, 1200)
     pv = episodes.Planner(lib, "Hörspiele/Bibi").preview()
-    assert [e["name"] for e in pv["episodes"]] == ["Der Hexenbesen", "Kartoffelbrei", "Die Kuh im Schlafzimmer"], pv
+    # eine Datei = eine Folge: die Folge heißt wie die Datei, die Nummer bleibt erhalten
+    bibi = ["01 - Der Hexenbesen", "02 - Kartoffelbrei", "03 - Die Kuh im Schlafzimmer"]
+    assert [e["name"] for e in pv["episodes"]] == bibi, pv
     r = episodes.Planner(lib, "Hörspiele/Bibi").apply()
-    assert r["removed"] == ["Hörspiele/Bibi/Sammlung"] and names(h / "Bibi") == ["Der Hexenbesen", "Die Kuh im Schlafzimmer",
-                                                                                 "Kartoffelbrei"]
-    assert [d.name for d in lib._subdirs(h / "Bibi")] == ["Der Hexenbesen", "Kartoffelbrei", "Die Kuh im Schlafzimmer"]
+    assert r["removed"] == ["Hörspiele/Bibi/Sammlung"] and names(h / "Bibi") == bibi
+    assert [d.name for d in lib._subdirs(h / "Bibi")] == bibi
+
+    # 2b) Lose Dateien neben schon vorhandenen Folgen (Titel im Tag ohne Nummer, Dateiname mit Nummer):
+    #     Namen behalten die Nummer, und die neuen Folgen reihen sich natürlich ein statt davor
+    for i, t in ((5, "Auf Hoher See"), (6, "Und Die Schule")):
+        mp3(h / "Elefant" / f"Elefant - {i:03d} - {t}" / f"Elefant - {i:03d} - {t}.mp3", tmp, t, "Elefant", 1200)
+    for i, t in ((38, "Der Zoo Zieht Um"), (39, "Kauft Ein"), (2, "Rettet Den Zoo")):
+        mp3(h / "Elefant" / f"Elefant - {i:03d} - {t}.mp3", tmp, t, "Elefant", 1200)
+    episodes.Planner(lib, "Hörspiele/Elefant").apply()
+    assert [d.name for d in lib._subdirs(h / "Elefant")] == [
+        "Elefant - 002 - Rettet Den Zoo", "Elefant - 005 - Auf Hoher See", "Elefant - 006 - Und Die Schule",
+        "Elefant - 038 - Der Zoo Zieht Um", "Elefant - 039 - Kauft Ein"], [d.name for d in lib._subdirs(h / "Elefant")]
 
     # 3) Einzelnes Hörspiel mit benannten, kurzen Kapiteln: bleibt, wie es ist
     for i, t in enumerate(("Der Wald", "Die Maus", "Der Fuchs", "Die Eule"), 1):

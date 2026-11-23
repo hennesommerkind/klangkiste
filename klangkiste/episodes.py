@@ -188,6 +188,13 @@ class Planner:
             self.sources.append(d)
             for key, items in groups.items():
                 stem = next((r["stem"] for r in items if r["stem"]), "")
+                if len(items) == 1 and not items[0]["marker"]:
+                    # Eine Datei = eine Folge: der Dateiname trägt oft mehr als der Titel („Serie - 038 - Titel“).
+                    # Dann heißt die Folge wie die Datei – so bleibt die Folgennummer erhalten und die
+                    # Reihenfolge stimmt von selbst (wie bei „Jede Datei als eigene Folge“ beim Hochladen).
+                    file_stem = items[0]["path"].stem.strip()
+                    if stem and _key(stem) in _key(file_stem):
+                        stem = file_stem
                 name, stays = self._claim(stem or d.name, d)
                 if any(r["doubled"] for r in items):
                     self.warnings.append(f"Doppelter Titel in den Dateien – als „{name}“ einsortiert.")
@@ -240,6 +247,9 @@ class Planner:
         if not self.moves and not self.review:
             return {"moved": 0, "episodes": 0, "removed": [], "review": 0, "series": self.series_rel}
         old_order = [d.name for d in lib._subdirs(series)]
+        # Kamen alle neuen Folgen aus losen Dateien der Serie und gab es keine eigene Reihenfolge, bleibt es
+        # bei der natürlichen Sortierung (Folge 5 vor Folge 38) – sonst stünden die neuen vor den alten.
+        natural = not lib._order(series).get("folders") and all(src.parent == series for src, _ in self.moves)
         made, track_order, covers = [], {}, {}
         plan = [(src, name) for src, name in self.moves] + [(lib.path(r["file"]), REVIEW) for r in self.review]
         for src, name in plan:
@@ -286,9 +296,10 @@ class Planner:
                 if n in now and n not in order:
                     order.append(n)
         order += [n for n in sorted(now - set(order) - {REVIEW}, key=_natural)] + ([REVIEW] if REVIEW in now else [])
-        data = lib._order(series)
-        data["folders"] = order
-        lib._write_order(series, data)
+        if not natural:
+            data = lib._order(series)
+            data["folders"] = order
+            lib._write_order(series, data)
         return {"moved": len(plan), "episodes": len([m for m in made if m != REVIEW]), "removed": removed,
                 "review": len(self.review), "series": self.series_rel}
 
