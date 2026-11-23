@@ -121,13 +121,22 @@ def cover():
     return c
 
 
+# Haken v2: schlanker als die Schlitze im Deckel (die bleiben, wie sie sind). Die Skådis-Schlitze sind
+# 5 × 15 mm mit runden Enden – ein eckiges Profil von 4,4 × 14 mm passt da nicht durch. Jetzt 4,0 dick,
+# 11,5 hoch beim Einstecken und an allen Längskanten gefast.
+HK_T, HK_PEG, HK_TAB, HK_TAB_T, HK_BOARD = 4.0, 7.0, 4.5, 2.4, 5.6
+
+
 def hook():
     """Profil in (y, z): Flansch innen im Deckel, Hals durch den Deckel, Zapfen durch die Platte, Nase nach unten."""
     f0 = -(COVER_T)                 # Innenseite des Deckels
-    pts = [(-3, f0), (PEG_H + 3, f0), (PEG_H + 3, f0 + FLANGE_T), (PEG_H, f0 + FLANGE_T),
-           (PEG_H, BOARD + TAB_T), (-TAB_DOWN + 1.2, BOARD + TAB_T), (-TAB_DOWN, BOARD + TAB_T - 1.2),
-           (-TAB_DOWN, BOARD), (0, BOARD), (0, f0 + FLANGE_T), (-3, f0 + FLANGE_T)]
-    return cq.Workplane("XY").polyline(pts).close().extrude(HOOK_T)
+    top = HK_BOARD + HK_TAB_T
+    pts = [(-3, f0), (PEG_H + 3, f0), (PEG_H + 3, f0 + FLANGE_T), (HK_PEG, f0 + FLANGE_T),
+           (HK_PEG, top - 1.0), (HK_PEG - 1.0, top), (-HK_TAB + 1.0, top), (-HK_TAB, top - 1.0),
+           (-HK_TAB, HK_BOARD), (0, HK_BOARD), (0, f0 + FLANGE_T), (-3, f0 + FLANGE_T)]
+    h = cq.Workplane("XY").polyline(pts).close().extrude(HK_T)
+    # Fase an den Kanten des Teils, das durch die Wand muss
+    return h.faces(">Z or <Z").edges(cq.selectors.BoxSelector((-HK_TAB - 1, -0.2, -1), (HK_PEG + 1, top + 1, HK_T + 1))).chamfer(0.6)
 
 
 # ---------- Ausgabe ----------
@@ -171,3 +180,4 @@ if __name__ == "__main__":
         ("Deckel", parts["display_deckel"], 90, 45),
         ("Haken 1", hk, 150, 30), ("Haken 2", hk, 165, 30),
     ])
+    write_3mf(out / "klangkiste_display_haken_v2.3mf", [("Haken 1", hk, 80, 90), ("Haken 2", hk, 100, 90)])
