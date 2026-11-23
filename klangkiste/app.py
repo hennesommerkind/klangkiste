@@ -436,11 +436,14 @@ class Box:
         elif action == "play_folder":
             self.library.path(value)
             self._take_over_from_spotify()
-            self.active_card = None
-            p.play_folder(str(value).strip("/"), restart=False)
+            value = str(value).strip("/")
+            if self._keeps_card(value) and value.rsplit("/", 1)[0] == self._card_folder():
+                p.play_episode(value)       # Folge aus der Serie der aufgelegten Figur: Serie bleibt die Abspielliste
+            else:
+                p.play_folder(value, restart=False)
         elif action == "play_episode":
             self._take_over_from_spotify()
-            self.active_card = None
+            self._keeps_card(str(value).strip("/"))
             p.play_episode(value)
         elif action == "play_url":
             self._check_url(value)
@@ -494,6 +497,23 @@ class Box:
             log.warning("Karte %s: %s", main, e)
             self.toast(str(e))
         self.publish_state()
+
+    def _card_folder(self):
+        """Ordner, auf den die aufgelegte Figur zeigt – None, wenn keine liegt oder sie etwas anderes ist."""
+        card = self.store.cards.get(self.active_card) if self.active_card and self.card_present else None
+        if not card or card.get("type") in ("command", "url"):
+            return None
+        return str(card.get("target", "")).strip("/") or None
+
+    def _keeps_card(self, folder):
+        """Von Hand etwas anderes gewählt: Liegt die Figur noch und gehört die Auswahl zu ihrem Ordner
+        (z. B. eine andere Folge ihrer Serie), bleibt sie zuständig – Herunternehmen pausiert weiterhin.
+        Sonst gilt die Wiedergabe als von Hand gestartet."""
+        base = self._card_folder()
+        if base and (folder == base or folder.startswith(base + "/")):
+            return True
+        self.active_card = None
+        return False
 
     def _run_card(self, card_id, card):
         if card.get("type") == "command":
