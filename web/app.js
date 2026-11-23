@@ -339,7 +339,8 @@ function updateNow() {
   $("#np-stream").checked = !!s.stream;
   $("#np-hp").hidden = !s.headphones;
   $("#np-du").textContent = fmt(s.duration);
-  $$("#np-queue li").forEach((li, i) => li.classList.toggle("current", i === s.track - 1));
+  if (S.queueEp !== s.episode && $("#np-queue .ep")) renderQueue();     // andere Folge: Gruppen neu aufklappen
+  else $$("#np-queue li[data-i]").forEach((li) => li.classList.toggle("current", +li.dataset.i === s.track - 1));
   tick();
 }
 function tick() {
@@ -348,9 +349,31 @@ function tick() {
 }
 function renderQueue() {
   const card = $("#np-queue-card"); if (!card) return;
-  card.hidden = S.queue.length < 2 || S.state.spotify;
-  $("#np-queue").innerHTML = S.queue.map((q, i) => `<li class="${i === S.state.track - 1 ? "current" : ""}" data-i="${i}"><span>${esc(q.title)}</span><small>${q.duration ? fmt(q.duration) : ""}</small></li>`).join("");
-  $$("#np-queue li").forEach((li) => li.onclick = () => act("jump", +li.dataset.i));
+  const s = S.state, cur = s.track - 1, list = $("#np-queue");
+  card.hidden = S.queue.length < 2 || s.spotify;
+  const row = (q, i, n) => `<li class="${i === cur ? "current" : ""}" data-i="${i}"${n ? ` data-n="${n}"` : ""}><span>${esc(q.title)}</span><small>${q.duration ? fmt(q.duration) : ""}</small></li>`;
+  // Serie: eine Zeile pro Folge, die laufende ist aufgeklappt – statt hunderter Teile untereinander
+  const groups = [];
+  S.queue.forEach((q, i) => { const g = groups[groups.length - 1]; if (g && g.name === q.episode) g.items.push([q, i]); else groups.push({ name: q.episode, items: [[q, i]] }); });
+  const grouped = groups.length > 1 && groups.every((g) => g.name);
+  S.queueEp = s.episode;
+  $("h2", card).textContent = grouped ? "Folgen" : "Titel";
+  list.classList.toggle("grouped", grouped);
+  if (!grouped) list.innerHTML = S.queue.map((q, i) => row(q, i)).join("");
+  else list.innerHTML = groups.map((g, k) => {
+    const on = g.items.some(([, i]) => i === cur), secs = g.items.reduce((a, [q]) => a + (q.duration || 0), 0);
+    return `<li class="ep${on ? " current open" : ""}"><button class="ephead" data-first="${g.items[0][1]}" aria-expanded="${on}"><b>${k + 1}</b><span>${esc(g.name)}</span><small>${g.items.length > 1 ? g.items.length + " Teile · " : ""}${secs ? fmt(secs) : ""}</small></button>
+      ${g.items.length > 1 ? `<ol class="parts">${g.items.map(([q, i], n) => row(q, i, n + 1)).join("")}</ol>` : ""}</li>`;
+  }).join("");
+  $$("li[data-i]", list).forEach((li) => li.onclick = () => act("jump", +li.dataset.i));
+  $$(".ephead", list).forEach((b) => b.onclick = () => {
+    const li = b.parentElement;
+    if (li.classList.contains("current") && $(".parts", li)) { li.classList.toggle("open"); b.setAttribute("aria-expanded", li.classList.contains("open")); }
+    else act("jump", +b.dataset.first);            // andere Folge antippen = dort beginnen
+  });
+  // Lange Listen: zur laufenden Zeile rollen, ohne die Seite zu verschieben
+  const here = $("li.current", list);
+  if (here && list.scrollHeight > list.clientHeight) list.scrollTop = Math.max(0, here.offsetTop - list.offsetTop - 60);
 }
 function renderMini() {
   const m = $("#mini"), s = S.state;
@@ -544,16 +567,17 @@ const viewFolder = run(async () => {
       <div><h1 style="overflow-wrap:anywhere">${esc(leaf(name))}</h1><p class="muted">${meta} ${f.cards.length ? `<span class="pill accent">${f.cards.length === 1 ? "Karte zugewiesen" : f.cards.length + " Karten"}</span>` : ""}</p>
       <div class="row wrap"><button class="btn primary" id="play" ${f.total_tracks ? "" : "disabled"}>${ICON.play.replace("<svg", '<svg class="icon" style="fill:currentColor;stroke:none"')} ${subs.length ? "Alles abspielen" : "Abspielen"}</button>
       <button class="btn" id="assign">${ICON.card} Karte zuweisen</button>
+      ${!music && f.total_tracks ? `<button class="btn" id="tidy" title="Dateien nach Geschichten in Folgen sortieren">${ICON.sort} Folgen aufräumen</button>` : ""}
       <button class="iconbtn" id="sub" aria-label="${music ? "Unterordner anlegen" : "Folge anlegen"}" title="${music ? "Unterordner anlegen" : "Folge anlegen"}">${ICON.plus}</button>
       <button class="iconbtn" id="ren" aria-label="Umbenennen" title="Umbenennen">${ICON.edit}</button>
       <button class="iconbtn" id="mv" aria-label="Verschieben" title="Verschieben">${ICON.move}</button>
       <button class="iconbtn" id="del" aria-label="Ordner löschen" title="Ordner löschen">${ICON.trash}</button></div></div></div>
-    ${subs.length ? `<div class="row" style="justify-content:space-between;margin-bottom:10px"><h2 style="margin:0">${subWord}</h2>${subs.length > 1 ? `<button class="btn small" id="sortf">${ICON.sort} Reihenfolge</button>` : ""}</div><div id="subarea">${tiles(subs)}</div><div style="height:26px"></div>` : ""}
+    ${subs.length ? `<div class="row" style="justify-content:space-between;margin-bottom:10px"><h2 style="margin:0">${subWord}</h2>${subs.length > 1 ? `<div class="row">${music ? "" : `<button class="btn small" id="mergef">Zusammenfassen</button>`}<button class="btn small" id="sortf">${ICON.sort} Reihenfolge</button></div>` : ""}</div><div id="subarea">${tiles(subs)}</div><div style="height:26px"></div>` : ""}
     ${subs.length && !tracks.length ? `${music ? "" : `<div class="drop" id="drop" data-ep="1" tabindex="0" role="button"><b>Folgen hinzufügen</b><br><span class="small">Mehrere Dateien hierher ziehen oder tippen – jede Datei wird eine eigene Folge</span><div id="up"></div></div>`}
     <p class="muted small">${music ? `Titel lädst du in die einzelnen ${subWord} hoch.` : `Besteht eine Folge aus mehreren Dateien, lege sie mit + an und lade die Dateien dort hoch.`} Eine Karte für „${esc(leaf(name))}“ spielt alle ${subWord} nacheinander, in der Reihenfolge oben.</p>` : `
     <div class="drop" id="drop" tabindex="0" role="button"><b>Titel hinzufügen</b><br><span class="small">Dateien hierher ziehen oder tippen (MP3, M4A, OGG, FLAC, WAV)</span><div id="up"></div></div>
     ${!music && !tracks.length ? `<label class="switch"><span>Jede Datei als eigene Folge<br><span class="muted small">Für Serien: aus jeder Datei wird ein eigener Unterordner, dem du eine Karte geben kannst</span></span><input type="checkbox" id="epmode"></label>` : ""}
-    <div id="trackarea"><div class="card">${tracks.length ? `${tracks.length > 1 ? `<div class="row" style="justify-content:flex-end;margin:-6px 0 4px"><button class="btn small" id="sortt">${ICON.sort} Reihenfolge</button></div>` : ""}<ul class="list">${tracks.map((t, i) => `<li><span class="muted small" style="min-width:1.8em;text-align:right">${i + 1}</span><div class="grow"><b style="font-weight:600">${esc(t.file)}</b></div><span class="muted small">${size(t.size)}</span><button class="iconbtn" data-del="${i}" aria-label="Titel löschen">${ICON.trash}</button></li>`).join("")}</ul>` : `<p class="muted" style="margin:0">Dieser Ordner ist noch leer.${music ? "" : " Für eine Serie schalte „Jede Datei als eigene Folge“ ein oder lege mit + Folgen an; für ein einzelnes Hörspiel lade die Titel direkt hier hoch."}</p>`}</div></div>`}
+    <div id="trackarea"><div class="card">${tracks.length ? `${tracks.length > 1 ? `<div class="row" style="justify-content:flex-end;margin:-6px 0 4px">${!music && parts.length >= 3 ? `<button class="btn small" id="splitt">Abtrennen</button>` : ""}<button class="btn small" id="sortt">${ICON.sort} Reihenfolge</button></div>` : ""}<ul class="list">${tracks.map((t, i) => `<li><span class="muted small" style="min-width:1.8em;text-align:right">${i + 1}</span><div class="grow"><b style="font-weight:600">${esc(t.file)}</b></div><span class="muted small">${size(t.size)}</span><button class="iconbtn" data-del="${i}" aria-label="Titel löschen">${ICON.trash}</button></li>`).join("")}</ul>` : `<p class="muted" style="margin:0">Dieser Ordner ist noch leer.${music ? "" : " Für eine Serie schalte „Jede Datei als eigene Folge“ ein oder lege mit + Folgen an; für ein einzelnes Hörspiel lade die Titel direkt hier hoch."}</p>`}</div></div>`}
     <input type="file" id="files" multiple accept="audio/*,.mp3,.m4a,.m4b,.ogg,.opus,.flac,.wav,.aac,image/*" hidden>
     <input type="file" id="cvfile" accept="image/*" hidden>`;
   $$(".crumbs .crumb").forEach((b) => b.onclick = () => { const p = b.dataset.p; CATS.includes(p) ? goCat(p) : goFolder(p); });
@@ -576,6 +600,9 @@ const viewFolder = run(async () => {
   });
   $("#del").onclick = run(async () => { if (await ask("Ordner löschen?", `„${leaf(name)}“ mit ${f.total_tracks} Titeln${subs.length ? ` und ${subs.length} ${subWord}` : ""} wird endgültig gelöscht. Zugewiesene Karten werden frei.`, "Löschen", true)) { await api("/api/library/delete", { folder: name }); toast("Ordner gelöscht"); goUp(name); } });
   $$("[data-del]").forEach((b) => b.onclick = run(async () => { const t = tracks[b.dataset.del]; if (await ask("Titel löschen?", t.file, "Löschen", true)) { await api("/api/library/delete", { folder: name, file: t.file }); viewFolder(); } }));
+  if ($("#tidy")) $("#tidy").onclick = () => tidyDialog(name);
+  if ($("#mergef")) $("#mergef").onclick = () => mergeDialog(name, subs);
+  if ($("#splitt")) $("#splitt").onclick = () => splitDialog(name, tracks);
   if ($("#sortf")) $("#sortf").onclick = () => sortEditor($("#subarea"), name, "folders", subs.map((x) => ({ name: leaf(x.name), path: x.name, cover_v: x.cover_v, sub: subLabel(x) })), viewFolder);
   if ($("#sortt")) $("#sortt").onclick = () => sortEditor($("#trackarea"), name, "tracks", tracks.map((t) => ({ name: t.file })), viewFolder);
   const drop = $("#drop"), files = $("#files");
@@ -599,6 +626,65 @@ const viewFolder = run(async () => {
   dropTarget($("#fig"), (files) => figureDialog(name, figInfo(f), viewFolder, files), "Als Figur");
   if ($("#cvdel")) $("#cvdel").onclick = run(async () => { if (await ask("Titelbild entfernen?", "Danach wird – falls vorhanden – das Bild aus den Musikdateien angezeigt.", "Entfernen", true)) { await api("/api/cover?folder=" + encodeURIComponent(name), {}, "DELETE"); viewFolder(); } });
 });
+
+// ---------- Folgen aufräumen, zusammenfassen, abtrennen ----------
+const tidyDialog = run(async (name) => {
+  openDialog(`<h2>Folgen aufräumen</h2><p class="muted">Ich lese die Titel …</p>`);
+  let p;
+  try { p = await api("/api/library/episodes?folder=" + encodeURIComponent(name)); }
+  catch (e) { closeDialog(); throw e; }
+  const warn = p.warnings.length ? `<h3 class="tidy-h">Auffällig</h3><ul class="tidy-notes">${p.warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>` : "";
+  const review = p.review.length ? `<h3 class="tidy-h">Kommt nach „${esc(p.review_folder)}“</h3><ul class="tidy-notes">${p.review.map((r) => `<li><b>${esc(leaf(r.file))}</b> (${fmt(r.seconds)}) – ${esc(r.why)}</li>`).join("")}</ul>` : "";
+  if (!p.moves) {
+    openDialog(`<h2>Folgen aufräumen</h2><p>Hier ist schon alles sortiert: Jeder Ordner ist eine Folge.</p>${warn}
+      <p class="muted small">Stimmt etwas nicht, hilft „Zusammenfassen“ in der Serie oder „Abtrennen“ in einer Folge.</p>
+      <div class="actions"><button class="btn primary" id="tc">Schließen</button></div>`);
+    $("#tc", dialog).onclick = closeDialog; return;
+  }
+  const moved = p.episodes.filter((e) => !e.stays);
+  openDialog(`<h2>Folgen aufräumen</h2>
+    ${moved.length ? `<p>Aus ${p.moves - p.review.length} Dateien ${moved.length === 1 ? "wird <b>1 Folge</b>" : `werden <b>${moved.length} Folgen</b>`} in „${esc(leaf(p.series))}“. Jede Geschichte bekommt einen eigenen Ordner, ihre Teile laufen nacheinander durch.</p>` : `<p>Die Folgen stimmen schon. Nur ${p.review.length === 1 ? "eine Datei passt" : p.review.length + " Dateien passen"} nicht zu ${p.review.length === 1 ? "ihrer" : "ihren"} Folge.</p>`}
+    <ul class="list tidy-list">${p.episodes.map((e) => `<li><div class="grow"><b>${esc(e.name)}</b><span>${e.files} ${e.files === 1 ? "Datei" : "Teile"}${e.seconds ? " · " + fmt(e.seconds) : ""}${e.stays ? " · bleibt, wo sie ist" : ""}</span></div></li>`).join("")}</ul>
+    ${warn}${review}
+    <p class="muted small">Die Titel werden nur verschoben, nichts wird gelöscht. Leere Album-Ordner verschwinden, ihre Karten zeigen danach auf die Serie. Gemerkte Abspielstellen der Serie beginnen neu.</p>
+    <div class="actions"><button class="btn" id="tc">Abbrechen</button><button class="btn primary" id="to">Aufräumen</button></div>`);
+  $("#tc", dialog).onclick = closeDialog;
+  $("#to", dialog).onclick = run(async (e) => {
+    e.target.disabled = true; e.target.textContent = "Räume auf …";
+    let r;
+    try { r = await api("/api/library/episodes", { folder: name }); } finally { closeDialog(); }
+    toast([r.episodes ? `${r.episodes} ${r.episodes === 1 ? "Folge" : "Folgen"} angelegt` : "", r.review ? `${r.review} zum Prüfen abgelegt` : ""].filter(Boolean).join(" · ") || "Aufgeräumt");
+    goFolder(r.series);
+  });
+});
+
+function mergeDialog(name, subs) {
+  openDialog(`<h2>Folgen zusammenfassen</h2><p class="muted">Wähle die Folgen, die eigentlich eine Geschichte sind. Ihre Titel ziehen in die oberste gewählte Folge; die anderen Ordner verschwinden.</p>
+    <ul class="list tidy-list">${subs.map((x, i) => `<li><label class="pick"><input type="checkbox" value="${i}"><span>${esc(leaf(x.name))}<small>${esc(subLabel(x))}</small></span></label></li>`).join("")}</ul>
+    <div class="actions"><button class="btn" id="mc">Abbrechen</button><button class="btn primary" id="mo" disabled>Zusammenfassen</button></div>`);
+  const picked = () => $$(".tidy-list input:checked", dialog).map((c) => subs[+c.value].name);
+  $$(".tidy-list input", dialog).forEach((c) => c.onchange = () => { $("#mo", dialog).disabled = picked().length < 2; });
+  $("#mc", dialog).onclick = closeDialog;
+  $("#mo", dialog).onclick = run(async () => {
+    const r = await api("/api/library/merge", { folders: picked() });
+    closeDialog(); toast("Zusammengefasst"); goFolder(r.name);
+  });
+}
+
+function splitDialog(name, tracks) {
+  openDialog(`<h2>Titel abtrennen</h2><p class="muted">Wähle die Titel, die eine eigene Folge sind. Sie ziehen in einen neuen Ordner direkt hinter dieser Folge.</p>
+    <label class="field"><span>Name der neuen Folge</span><input type="text" id="sn" autocomplete="off"></label>
+    <ul class="list tidy-list">${tracks.map((t, i) => `<li><label class="pick"><input type="checkbox" value="${i}"><span>${esc(t.file)}</span></label></li>`).join("")}</ul>
+    <div class="actions"><button class="btn" id="sc">Abbrechen</button><button class="btn primary" id="so">Abtrennen</button></div>`);
+  $("#sc", dialog).onclick = closeDialog;
+  $("#so", dialog).onclick = run(async () => {
+    const files = $$(".tidy-list input:checked", dialog).map((c) => tracks[+c.value].file), n = $("#sn", dialog).value.trim();
+    if (!n) throw new Error("Bitte einen Namen für die neue Folge angeben");
+    if (!files.length || files.length === tracks.length) throw new Error("Bitte einen Teil der Titel auswählen, nicht alle");
+    const r = await api("/api/library/split", { folder: name, files, name: n });
+    closeDialog(); toast("Abgetrennt"); goFolder(r.name);
+  });
+}
 
 function xhrUpload(url, file, onProgress) {
   return new Promise((res, rej) => {

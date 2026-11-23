@@ -74,6 +74,28 @@ Viele Folgen auf einmal: Ist jede Folge eine einzige Datei, in der Serie mehrere
 hochladen – „Jede Datei als eigene Folge“ (in einer leeren Serie als Schalter, in einer Serie
 mit Folgen automatisch) legt pro Datei einen Unterordner mit ihrem Namen an.
 
+### Folgen aufräumen
+
+Dateien kommen unterschiedlich an: mal eine Datei pro Folge, mal mehrere Dateien pro Folge, mal
+mehrere Folgen auf einem Album. **Folgen aufräumen** (Knopf im Ordner, nur bei Hörspielen) liest die
+Titel, zeigt eine Vorschau und sortiert dann in echte Folgen-Ordner direkt unter der Serie:
+
+- Vom Titel (Tag, sonst Dateiname) wird eine Endung wie „- Teil 03“, „Kapitel 3“ oder „(2/10)“ und
+  eine führende Titelnummer abgeschnitten. Dateien mit gleichem Rest sind eine Folge.
+- Sagt der Titel nichts („Track 03“), entscheidet das Album-Tag; fehlt auch das, bleibt der Ordner
+  eine Folge.
+- Verschiedene Titel ohne „Teil“ gelten nur dann als einzelne Folgen, wenn die Dateien lang sind
+  (ab 8 Minuten) – sonst sind es Kapitel eines Hörspiels und der Ordner bleibt, wie er ist.
+- Auffälliges wird gemeldet: fehlende Teile, doppelt getaggte Titel. Teile, die viel länger sind
+  als die übrigen ihrer Folge, kommen in den Ordner „_Bitte prüfen“ (läuft nicht mit der Serie mit).
+- Es wird nur verschoben, nie gelöscht. Leere Album-Ordner verschwinden, ihre Karten zeigen danach
+  auf die Serie; gemerkte Abspielstellen der Serie beginnen neu.
+
+Liegt die Automatik daneben: **Zusammenfassen** (in der Serie) legt Folgen zusammen, **Abtrennen**
+(in einer Folge) macht aus gewählten Titeln eine eigene Folge. Test: `python3 tests/test_episodes.py`.
+
+Unter „Läuft“ zeigt eine Serie eine Zeile pro Folge; die laufende ist aufgeklappt.
+
 ## MQTT
 
 Status (JSON, retained): `klangkiste/state` · Erreichbarkeit: `klangkiste/status` ·
@@ -135,7 +157,12 @@ Unterspannung, Abbrüche und die Namensauflösung in einer Ausgabe (ohne Kennwö
   Das Programmverzeichnis gehört root, der Dienst `klangkiste` kann seinen Code nicht ändern.
 - Externes Display: `GET /api/display.jpg?size=132&bg=0A1929` liefert Cover mit Figur als JPEG,
   MQTT `klangkiste/state` enthält `image_v` (ändert sich mit dem Bild). Beispiel für ein
-  ESP32-CYD mit ESPHome/LVGL: `extras/esphome/klangkiste-display-cyd.yaml`
+  ESP32-CYD mit ESPHome/LVGL: `extras/esphome/klangkiste-display-cyd.yaml`.
+  Das Karussell (`/api/display/strip.jpg`) blättert durch die Folgen der laufenden Serie; gestartet
+  wird mit `klangkiste/cmd/play_episode` (Ordner der Folge). Einzelne Hörspiele und Alben zeigen nur
+  ihr Cover. Folgen ohne eigenes Bild – oder mit demselben wie eine andere Folge – bekommen ihre
+  Nummer ins Cover. Liegt keine Figur auf und läuft nichts, meldet der Zustand `idle` und die Box
+  liefert ein Ruhebild.
 - Test ohne Hardware: `python3 tests/fake_mpd.py /tmp/kk/music 6611 &`,
   `python3 tests/fake_librespot.py 3699 &`, für Kopfhörer `PATH=tests/fakebin:$PATH` und
   `python3 -m klangkiste --mock --data /tmp/kk --port 8099 --mpd-port 6611 --spotify-url http://127.0.0.1:3699`

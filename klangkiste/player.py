@@ -399,6 +399,7 @@ class Player:
                 "pos": int(it.get("pos", 0)),
                 "title": _real_title(it.get("title")) or f.rsplit("/", 1)[-1].rsplit(".", 1)[0],
                 "duration": round(float(it.get("duration", it.get("time", 0)) or 0)),
+                "episode": self._episode_of(f),     # Folge, zu der der Titel gehört (nur wenn eine Serie läuft)
             })
         return out
 

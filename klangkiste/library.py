@@ -13,6 +13,7 @@ FIGURE = ".figur.png"   # versteckt: taucht weder als Titelbild noch als Titel a
 FIGSIZE = ".figur.json"  # Größe der Figur auf dem Cover (Faktor, 1 = Standard)
 FIG_MIN, FIG_MAX = 0.5, 1.5
 CATEGORIES = ("Hörspiele", "Musik")
+REVIEW = "_Bitte prüfen"   # Ablage fürs Aufräumen: sichtbar in der Oberfläche, aber nicht Teil der Serie beim Abspielen
 ORDER_FILE = ".reihenfolge.json"   # eigene Reihenfolge pro Ordner; wandert mit Sicherung und Umbenennen mit
 
 
@@ -177,7 +178,8 @@ class Library:
         def walk(x):
             out.extend(self.rel(f) for f in self._audio_files(x))
             for sub in self._subdirs(x):
-                walk(sub)
+                if sub.name != REVIEW:      # Dateien zum Prüfen laufen nicht mit der Serie mit
+                    walk(sub)
 
         walk(d)
         return out

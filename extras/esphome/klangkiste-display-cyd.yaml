@@ -3,9 +3,16 @@
 #
 # Oben ein Karussell: in der Mitte groß die laufende Folge, dahinter links und
 # rechts je ein Nachbar. Blättern mit den Pfeilen unten, per Wischen oder
-# durch Antippen eines Nachbarn. Mittleres Cover antippen = abspielen.
+# durch Antippen eines Nachbarn. Mittleres Cover antippen = abspielen
+# (Blättern allein ändert die Wiedergabe nicht).
 # Der Knopf in der Mitte unten wechselt eine Ebene höher (Serien statt Folgen).
-# Ohne Bedienung springt die Anzeige nach 15 s zurück.
+# Ohne Bedienung springt die Anzeige nach 5 s zur laufenden Folge zurück.
+#
+# Einzelne Hörspiele und Musikalben zeigen nur ihr Cover – dort gibt es nichts
+# zu blättern. Liegt keine Figur auf und läuft nichts, zeigt das Display nach
+# ein paar Sekunden ein Ruhebild; Blättern ist dann abgeschaltet.
+# Folgen ohne eigenes Bild (oder mit demselben wie eine andere Folge) bekommen
+# von der Box eine Nummer ins Cover.
 #
 # Daten: MQTT klangkiste/state · Bilder und Blättern: http://<box>/api/display…
 # Secrets: wifi_ssid, wifi_password, cyd_heizung__encryption_key,
@@ -67,6 +74,7 @@ mqtt:
             id(k_playing) = (st == "play");
             id(k_elapsed) = x["elapsed"] | 0.0f;
             id(k_duration) = x["duration"] | 0.0f;
+            id(k_idle) = x["idle"] | false;
             // Bild neu laden, wenn sich Cover/Figur oder die Folge geändert haben
             std::string img = x["image_v"] | "idle";
             img += "-" + to_string((int) (x["episode"] | 0));
@@ -81,9 +89,18 @@ mqtt:
                   condition:
                     lambda: 'return id(k_img_changed);'
                   then:
-                    - script.execute: show_current_image
-                    - light.turn_on: display_backlight
-                    - script.execute: backlight_timeout
+                    - if:
+                        condition:
+                          lambda: 'return id(k_idle);'
+                        then:
+                          # Figur abgenommen: erst nach ein paar Sekunden aufs Ruhebild (kein Flackern,
+                          # wenn die Figur nur kurz verrutscht)
+                          - script.execute: idle_later
+                        else:
+                          - script.stop: idle_later
+                          - script.execute: show_current_image
+                          - light.turn_on: display_backlight
+                          - script.execute: backlight_timeout
 
 # Das Karussell ist EIN Bild: jedes weitere Bild kostet den ESP32 einen eigenen Dekoder und Ladepuffer
 online_image:
@@ -176,11 +193,13 @@ globals:
   - { id: k_image_v, type: std::string, initial_value: '""' }
   - { id: k_img_changed, type: bool, initial_value: "false" }
   - { id: k_have_img, type: bool, initial_value: "false" }
+  - { id: k_idle, type: bool, initial_value: "false" }     # keine Figur, nichts läuft: Ruhebild
   # Blättern
   - { id: k_browse, type: bool, initial_value: "false" }
   - { id: k_up, type: bool, initial_value: "false" }
   - { id: k_pos, type: int, initial_value: "0" }
   - { id: b_ok, type: bool, initial_value: "false" }
+  - { id: b_empty, type: bool, initial_value: "false" }    # hier gibt es nichts zu blättern
   - { id: b_sub, type: std::string, initial_value: '""' }
   - { id: b_folder, type: std::string, initial_value: '""' }
 
@@ -207,6 +226,19 @@ script:
     then:
       - script.execute: load_strip
 
+  # Ruhebild mit Verzögerung
+  - id: idle_later
+    mode: restart
+    then:
+      - delay: 5s
+      - if:
+          condition:
+            lambda: 'return id(k_idle) && !id(k_browse);'
+          then:
+            - lvgl.label.update: { id: lbl_info, text: "" }
+            - lvgl.bar.update: { id: bar_pos, value: 0 }
+            - script.execute: load_strip
+
   - id: refresh_time
     then:
       - lvgl.bar.update:
@@ -223,53 +255,58 @@ script:
     then:
       - light.turn_on: display_backlight
       - script.execute: backlight_timeout
-      - http_request.get:
-          url: !lambda |-
-            std::string u = id(k_browse) ? str_sprintf("http://${box}/api/display/browse?pos=%d", id(k_pos) + dir)
-                                         : str_sprintf("http://${box}/api/display/browse?step=%d", dir);
-            if (id(k_up)) u += "&up=1";
-            return u;
-          capture_response: true
-          max_response_buffer_size: 2048
-          on_error:
-            then:
-              - lvgl.label.update: { id: lbl_info, text: "Box nicht erreichbar" }
-          on_response:
-            then:
-              - lambda: |-
-                  id(b_ok) = false;
-                  if (response->status_code != 200) return;
-                  json::parse_json(body, [](JsonObject root) -> bool {
-                    int count = root["count"] | 0;
-                    if (count < 1) return true;
-                    id(k_pos) = root["pos"] | 0;
-                    id(b_sub) = root["sub"] | "";
-                    id(b_folder) = root["folder"] | "";
-                    id(b_ok) = true;
-                    return true;
-                  });
-              - if:
-                  condition:
-                    lambda: 'return !id(b_ok);'
-                  then:
-                    - lvgl.label.update:
-                        id: lbl_info
-                        text: !lambda |-
-                          if (response->status_code == 404) return std::string("Bitte zuerst die Box aktualisieren");
-                          return str_sprintf("Geht nicht (Antwort %d)", response->status_code);
-              - if:
-                  condition:
-                    lambda: 'return id(b_ok);'
-                  then:
-                    - lambda: 'id(k_browse) = true;'
-                    - lvgl.label.update: { id: lbl_info, text: !lambda 'return id(b_sub);' }
-                    - script.execute: load_strip
-                    - script.execute: browse_timeout
+      - if:
+          condition:
+            lambda: 'return !id(k_idle);'    # Ruhebild: gestartet wird mit der Figur, nicht am Display
+          then:
+              - http_request.get:
+                  url: !lambda |-
+                    std::string u = id(k_browse) ? str_sprintf("http://${box}/api/display/browse?pos=%d", id(k_pos) + dir)
+                                                 : str_sprintf("http://${box}/api/display/browse?step=%d", dir);
+                    if (id(k_up)) u += "&up=1";
+                    return u;
+                  capture_response: true
+                  max_response_buffer_size: 2048
+                  on_error:
+                    then:
+                      - lvgl.label.update: { id: lbl_info, text: "Box nicht erreichbar" }
+                  on_response:
+                    then:
+                      - lambda: |-
+                          id(b_ok) = false;
+                          id(b_empty) = false;
+                          if (response->status_code != 200) return;
+                          json::parse_json(body, [](JsonObject root) -> bool {
+                            int count = root["count"] | 0;
+                            if (count < 1) { id(b_empty) = true; return true; }   // einzelnes Hörspiel: nichts zu blättern
+                            id(k_pos) = root["pos"] | 0;
+                            id(b_sub) = root["sub"] | "";
+                            id(b_folder) = root["folder"] | "";
+                            id(b_ok) = true;
+                            return true;
+                          });
+                      - if:
+                          condition:
+                            lambda: 'return !id(b_ok) && !id(b_empty);'
+                          then:
+                            - lvgl.label.update:
+                                id: lbl_info
+                                text: !lambda |-
+                                  if (response->status_code == 404) return std::string("Bitte zuerst die Box aktualisieren");
+                                  return str_sprintf("Geht nicht (Antwort %d)", response->status_code);
+                      - if:
+                          condition:
+                            lambda: 'return id(b_ok);'
+                          then:
+                            - lambda: 'id(k_browse) = true;'
+                            - lvgl.label.update: { id: lbl_info, text: !lambda 'return id(b_sub);' }
+                            - script.execute: load_strip
+                            - script.execute: browse_timeout
 
   - id: browse_timeout
     mode: restart
     then:
-      - delay: 15s
+      - delay: 5s
       - script.execute: browse_end
 
   - id: browse_end
@@ -286,13 +323,17 @@ script:
   # Ebene wechseln: Folgen der Serie <-> alle Serien/Hörspiele
   - id: toggle_level
     then:
-      - lambda: |-
-          id(k_up) = !id(k_up);
-          id(k_browse) = false;
-      - lvgl.obj.update:
-          id: btn_up
-          bg_color: !lambda 'return id(k_up) ? lv_color_hex(0xFF7043) : lv_color_hex(0x14283A);'
-      - script.execute: { id: browse, dir: 0 }
+      - if:
+          condition:
+            lambda: 'return !id(k_idle);'
+          then:
+            - lambda: |-
+                id(k_up) = !id(k_up);
+                id(k_browse) = false;
+            - lvgl.obj.update:
+                id: btn_up
+                bg_color: !lambda 'return id(k_up) ? lv_color_hex(0xFF7043) : lv_color_hex(0x14283A);'
+            - script.execute: { id: browse, dir: 0 }
 
   # Mitte angetippt: beim Blättern den gezeigten Eintrag abspielen
   - id: cover_tap

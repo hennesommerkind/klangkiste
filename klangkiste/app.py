@@ -19,6 +19,7 @@ from .backup import Backup, BackupError
 from .bluetooth import Bluetooth, BluetoothError
 from . import sounds
 from . import display
+from . import episodes
 from .network import HOTSPOT_IP, Network, NetworkError
 from .buttons import Buttons
 from .config import BUTTON_ACTIONS, BUTTON_PINS, Store
@@ -61,6 +62,7 @@ class Box:
         self.closing = False
         self.learn = None
         self.active_card = None
+        self.card_present = False   # liegt gerade eine bekannte Figur auf dem Leser?
         self.last_unknown = None
         self.spotify = Spotify(self._on_spotify, args.spotify_url)
         self.bluetooth = Bluetooth(self.store, self._on_headphones)
@@ -204,8 +206,16 @@ class Box:
                       "cover_url": sp["cover"] or None})
             if sp["volume"] is not None:
                 s["volume"] = sp["volume"]
-        s["image_v"] = display.image_version(self.library, s.get("folder"), s["spotify"])
+        s["idle"] = self.is_idle(s)
+        # Bild der Folge, nicht der Serie – so wechselt es mit jeder Folge (Nummer im Cover)
+        shown = self.display_folder() if s.get("folder") else None
+        s["image_v"] = "ruhe" if s["idle"] else display.image_version(self.library, shown or s.get("folder"), s["spotify"])
         return s
+
+    def is_idle(self, s=None):
+        """Ruhebild am Display: keine Figur aufgelegt und es läuft nichts (auch kein Spotify)."""
+        s = s or self.player.state
+        return not self.card_present and self.controller != "spotify" and s.get("state") != "play"
 
     async def close_clients(self, app=None):
         """Offene Ereignis-Verbindungen der Browser beenden. Ohne das wartet der Dienst
@@ -475,6 +485,7 @@ class Box:
             return
         card = cards[key]
         if card.get("type") != "command":
+            self.card_present = True
             self._take_over_from_spotify()
         self.emit("card", {"id": key, "known": True, **card})
         try:
@@ -482,6 +493,7 @@ class Box:
         except Exception as e:
             log.warning("Karte %s: %s", main, e)
             self.toast(str(e))
+        self.publish_state()
 
     def _run_card(self, card_id, card):
         if card.get("type") == "command":
@@ -503,11 +515,13 @@ class Box:
 
     def on_remove(self):
         log.info("Karte entfernt")
+        self.card_present = False
         self.emit("card_removed", {})
         if self.store.config["audio"]["pause_on_remove"] and self.active_card:
             self.resume_after_spotify = False  # Figur ist weg: nach Spotify nicht weiterspielen
             if self.controller == "box":
                 self.player.pause()
+        self.publish_state()      # das Display wechselt aufs Ruhebild, auch wenn sich an der Wiedergabe nichts ändert
 
 
 # =====================================================================
@@ -680,6 +694,71 @@ async def api_move(request):
     return ok({"name": new})
 
 
+def _forget_positions(b, series):
+    """Gemerkte Abspielstellen einer Serie verwerfen – nach dem Umsortieren stimmen sie nicht mehr."""
+    for k in [k for k in b.store.resume if k == series or k.startswith(series + "/")]:
+        b.store.resume.pop(k)
+    b.store.save_resume()
+
+
+async def _stop_if_playing(b, series):
+    f = b.player.state.get("file") or ""
+    if f.startswith(series + "/"):
+        await asyncio.to_thread(b.player.stop)
+
+
+@routes.get("/api/library/episodes")
+async def api_episodes_preview(request):
+    """Vorschau fürs Aufräumen: welche Folgen aus den Dateien eines Ordners würden."""
+    b = box(request)
+    plan = await asyncio.to_thread(lambda: episodes.Planner(b.library, request.query["folder"]).preview())
+    return ok(plan)
+
+
+@routes.post("/api/library/episodes")
+async def api_episodes_apply(request):
+    """Sortiert die Dateien in Folgen-Ordner. Karten aufgelöster Alben zeigen danach auf die Serie."""
+    d = await request.json()
+    b = box(request)
+    planner = await asyncio.to_thread(episodes.Planner, b.library, d["folder"])
+    await _stop_if_playing(b, planner.series_rel)
+    r = await asyncio.to_thread(planner.apply)
+    for old in r["removed"]:
+        _retarget(b, old, r["series"])
+    _forget_positions(b, r["series"])
+    await asyncio.to_thread(b.player.update_db)
+    b.publish_state()
+    return ok(r)
+
+
+@routes.post("/api/library/merge")
+async def api_merge(request):
+    """Folgen zusammenfassen: alle Titel ziehen in die erste gewählte Folge."""
+    d = await request.json()
+    b = box(request)
+    series = str(d["folders"][0]).strip("/").rsplit("/", 1)[0]
+    await _stop_if_playing(b, series)
+    target, removed = await asyncio.to_thread(episodes.merge, b.library, d["folders"])
+    for old in removed:
+        _retarget(b, old, target)
+    _forget_positions(b, series)
+    await asyncio.to_thread(b.player.update_db)
+    return ok({"name": target})
+
+
+@routes.post("/api/library/split")
+async def api_split(request):
+    """Titel einer Folge als eigene Folge abtrennen."""
+    d = await request.json()
+    b = box(request)
+    series = str(d["folder"]).strip("/").rsplit("/", 1)[0]
+    await _stop_if_playing(b, series)
+    new = await asyncio.to_thread(episodes.split, b.library, d["folder"], d["files"], d["name"])
+    _forget_positions(b, series)
+    await asyncio.to_thread(b.player.update_db)
+    return ok({"name": new})
+
+
 @routes.post("/api/library/delete")
 async def api_delete(request):
     d = await request.json()
@@ -768,12 +847,14 @@ async def api_display_strip(request):
     q = request.query
     s = b.full_state()
     browsing = "pos" in q
+    idle = s["idle"] and not browsing
     try:
-        data = await asyncio.to_thread(display.strip, b.library, b.display_folder() if s.get("file") or browsing else None,
+        data = await asyncio.to_thread(display.strip, b.library,
+                                       b.display_folder() if (s.get("file") or browsing) and not idle else None,
                                        int(q["pos"]) if browsing else None, q.get("bg", "0A1929"),
                                        s["spotify"] and not browsing, s.get("title") or "",
                                        q.get("up") == "1", int(q.get("h", 100)), int(q.get("w", 320)),
-                                       int(q.get("n", 5)), q.get("fig") == "1")
+                                       int(q.get("n", 5)), q.get("fig") == "1", idle)
     except ImportError:
         raise web.HTTPServiceUnavailable(text="Pillow fehlt – bitte die Box aktualisieren")
     return web.Response(body=data, content_type="image/jpeg", headers={"Cache-Control": "no-cache"})
@@ -784,14 +865,15 @@ async def api_display_image(request):
     """Fertiges Bild (Cover + Figur) für ESP32-Displays. ?size=120&bg=0A1929"""
     b = box(request)
     s = b.full_state()
-    folder = s.get("folder")
+    folder = b.display_folder() if s.get("file") else s.get("folder")   # bei Serien die Folge, nicht die Serie
+    idle = s["idle"] and "pos" not in request.query
     if "pos" in request.query:      # Bild eines Eintrags beim Blättern
         it = await asyncio.to_thread(display.browse, b.library, b.display_folder(), int(request.query["pos"]))
         folder, s = it["folder"] or None, {**s, "spotify": False}
     try:
         data = await asyncio.to_thread(display.compose, b.library, folder,
                                        int(request.query.get("size", 120)), request.query.get("bg", "0A1929"),
-                                       s["spotify"], s.get("title") or "")
+                                       s["spotify"], s.get("title") or "", idle)
     except ImportError:
         raise web.HTTPServiceUnavailable(text="Pillow fehlt – bitte die Box aktualisieren")
     return web.Response(body=data, content_type="image/jpeg", headers={"Cache-Control": "no-cache"})
