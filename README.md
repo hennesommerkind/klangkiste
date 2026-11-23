@@ -158,7 +158,8 @@ Unterspannung, Abbrüche und die Namensauflösung in einer Ausgabe (ohne Kennwö
 - Externes Display: `GET /api/display.jpg?size=132&bg=0A1929` liefert Cover mit Figur als JPEG,
   MQTT `klangkiste/state` enthält `image_v` (ändert sich mit dem Bild). Beispiel für ein
   ESP32-CYD mit ESPHome/LVGL: `extras/esphome/klangkiste-display-cyd.yaml`.
-  Das Karussell (`/api/display/strip.jpg`) blättert durch die Folgen der laufenden Serie; gestartet
+  Das Karussell (`/api/display/strip.jpg`) blättert nur durch die Folgen der laufenden Serie (welche Serie
+  läuft, bestimmt die Figur); gestartet
   wird mit `klangkiste/cmd/play_episode` (Ordner der Folge). Einzelne Hörspiele und Alben zeigen nur
   ihr Cover. Folgen ohne eigenes Bild – oder mit demselben wie eine andere Folge – bekommen ihre
   Nummer ins Cover. Liegt keine Figur auf und läuft nichts, meldet der Zustand `idle` und die Box

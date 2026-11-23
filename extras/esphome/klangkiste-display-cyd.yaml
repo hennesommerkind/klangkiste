@@ -5,7 +5,8 @@
 # rechts je ein Nachbar. Blättern mit den Pfeilen unten, per Wischen oder
 # durch Antippen eines Nachbarn. Mittleres Cover antippen = abspielen
 # (Blättern allein ändert die Wiedergabe nicht).
-# Der Knopf in der Mitte unten wechselt eine Ebene höher (Serien statt Folgen).
+# Geblättert wird nur durch die Folgen der laufenden Serie – welche Serie läuft,
+# bestimmt die aufgelegte Figur.
 # Ohne Bedienung springt die Anzeige nach 5 s zur laufenden Folge zurück.
 #
 # Einzelne Hörspiele und Musikalben zeigen nur ihr Cover – dort gibt es nichts
@@ -196,7 +197,6 @@ globals:
   - { id: k_idle, type: bool, initial_value: "false" }     # keine Figur, nichts läuft: Ruhebild
   # Blättern
   - { id: k_browse, type: bool, initial_value: "false" }
-  - { id: k_up, type: bool, initial_value: "false" }
   - { id: k_pos, type: int, initial_value: "0" }
   - { id: b_ok, type: bool, initial_value: "false" }
   - { id: b_empty, type: bool, initial_value: "false" }    # hier gibt es nichts zu blättern
@@ -219,7 +219,6 @@ script:
           url: !lambda |-
             std::string u = "http://${box}/api/display/strip.jpg?bg=0A1929&h=${hoehe}&w=${breite}&n=${anzahl}";
             if (id(k_browse)) u += str_sprintf("&pos=%d", id(k_pos)); else u += "&v=" + id(k_image_v);
-            if (id(k_up)) u += "&up=1";
             return u;
 
   - id: show_current_image
@@ -263,7 +262,6 @@ script:
                   url: !lambda |-
                     std::string u = id(k_browse) ? str_sprintf("http://${box}/api/display/browse?pos=%d", id(k_pos) + dir)
                                                  : str_sprintf("http://${box}/api/display/browse?step=%d", dir);
-                    if (id(k_up)) u += "&up=1";
                     return u;
                   capture_response: true
                   max_response_buffer_size: 2048
@@ -312,28 +310,10 @@ script:
   - id: browse_end
     then:
       - script.stop: browse_timeout
-      - lambda: |-
-          id(k_browse) = false;
-          id(k_up) = false;
+      - lambda: 'id(k_browse) = false;'
       - lvgl.label.update: { id: lbl_info, text: "" }
-      - lvgl.obj.update: { id: btn_up, bg_color: 0x14283A }
       - script.execute: refresh_time
       - script.execute: load_strip
-
-  # Ebene wechseln: Folgen der Serie <-> alle Serien/Hörspiele
-  - id: toggle_level
-    then:
-      - if:
-          condition:
-            lambda: 'return !id(k_idle);'
-          then:
-            - lambda: |-
-                id(k_up) = !id(k_up);
-                id(k_browse) = false;
-            - lvgl.obj.update:
-                id: btn_up
-                bg_color: !lambda 'return id(k_up) ? lv_color_hex(0xFF7043) : lv_color_hex(0x14283A);'
-            - script.execute: { id: browse, dir: 0 }
 
   # Mitte angetippt: beim Blättern den gezeigten Eintrag abspielen
   - id: cover_tap
@@ -477,33 +457,22 @@ lvgl:
               text_color: 0xFF8A65
               text_font: font_12
 
-          # Pfeile und Ebenenwechsel
+          # Pfeile
           - button:
               styles: st_arrow
               x: 8
               y: 190
-              width: 84
+              width: 146
               height: 44
               on_click:
                 - script.execute: { id: browse, dir: -1 }
               widgets:
                 - label: { align: CENTER, text: "", text_font: montserrat_20, text_color: 0xE1F5FE }
           - button:
-              id: btn_up
               styles: st_arrow
-              x: 124
+              x: 166
               y: 190
-              width: 72
-              height: 44
-              on_click:
-                - script.execute: toggle_level
-              widgets:
-                - label: { align: CENTER, text: "", text_font: montserrat_20, text_color: 0xE1F5FE }
-          - button:
-              styles: st_arrow
-              x: 228
-              y: 190
-              width: 84
+              width: 146
               height: 44
               on_click:
                 - script.execute: { id: browse, dir: 1 }
