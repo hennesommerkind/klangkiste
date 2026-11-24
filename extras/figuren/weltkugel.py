@@ -38,7 +38,8 @@ def land_height():
     return np.clip((a - 0.25) / 0.5, 0, 1)      # steilere, aber nicht senkrechte Küste
 
 
-def globe(center):
+def globe(center, nlon=NLON, nlat=NLAT, info=False):
+    NLON, NLAT = nlon, nlat
     hmap = land_height()
     H, W = hmap.shape
     lat = np.linspace(-90, 90, NLAT + 1)[1:-1]
@@ -60,7 +61,17 @@ def globe(center):
     bot = np.stack([np.full(NLON, south), (j + 1) % NLON, j], -1)
     top0 = (n - 1) * NLON
     top = np.stack([np.full(NLON, north), top0 + j, top0 + (j + 1) % NLON], -1)
-    return v, np.concatenate([t, bot, top])
+    tri = np.concatenate([t, bot, top])
+    if not info:
+        return v, tri
+    # je Dreieck: 0 = Meer, 1 = Land, 2 = Eis (Antarktis, Grönland) – für die farbige Fassung
+    h = np.concatenate([hmap[py, px].ravel(), [0, 1]])
+    vlat = np.concatenate([LA.ravel(), [-90, 90]])
+    vlon = np.concatenate([LO.ravel(), [0, 0]])
+    land = h[tri].mean(1) > 0.5
+    tlat, tlon = vlat[tri].mean(1), vlon[tri[:, 0]]
+    ice = land & ((tlat < -60) | ((tlat > 59) & (tlon > -74) & (tlon < -11)))
+    return v, tri, land.astype(int) + ice.astype(int)
 
 
 def revolve(profile, center, seg=120):
@@ -133,6 +144,39 @@ def build():
     return [("Sockel", (sv, st)), ("Kelch", cup), ("Weltkugel", globe(np.array([cx, cy, zc])))], zc
 
 
+COLORS = {"Meer": "#2A78D6", "Land": "#4FA64A", "Eis": "#F2F5F7", "Sockel": "#3A4048", "Kelch": "#C9A227"}
+
+
+def write_3mf_color(path):
+    """Farbige Fassung für die Figur-Anzeige in der Klangkiste (Dialog „Figur“ › 3D-Datei, Originalfarben):
+    gröberes Netz, Farben je Dreieck als 3MF-Grundmaterialien."""
+    parts, zc = build()
+    sv, st = parts[0][1]
+    cx, cy = (sv[:, 0].min() + sv[:, 0].max()) / 2, (sv[:, 1].min() + sv[:, 1].max()) / 2
+    gv, gt, kind = globe(np.array([cx, cy, zc]), 320, 160, info=True)
+    names = list(COLORS)
+    mats = "".join(f'<base name="{n}" displaycolor="{COLORS[n]}FF"/>' for n in names)
+    objs = []
+    for i, (v, t, pidx) in enumerate([(sv, st, None), (*parts[1][1], None), (gv, gt, kind)], 2):
+        vs = "".join(f'<vertex x="{x:.3f}" y="{y:.3f}" z="{z:.3f}"/>' for x, y, z in v)
+        if pidx is None:
+            col = names.index("Sockel" if i == 2 else "Kelch")
+            ts = "".join(f'<triangle v1="{a}" v2="{b}" v3="{c}" pid="1" p1="{col}"/>' for a, b, c in t)
+        else:
+            ts = "".join(f'<triangle v1="{a}" v2="{b}" v3="{c}" pid="1" p1="{k}"/>' for (a, b, c), k in zip(t, pidx))
+        objs.append(f'<object id="{i}" type="model"><mesh><vertices>{vs}</vertices><triangles>{ts}</triangles></mesh></object>')
+    comps = "".join(f'<component objectid="{i}"/>' for i in (2, 3, 4))
+    model = ('<?xml version="1.0" encoding="UTF-8"?>'
+             '<model unit="millimeter" xml:lang="de" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">'
+             f'<resources><basematerials id="1">{mats}</basematerials>{"".join(objs)}'
+             f'<object id="5" type="model" name="Weltkugel"><components>{comps}</components></object></resources>'
+             '<build><item objectid="5"/></build></model>')
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/></Types>')
+        z.writestr("_rels/.rels", '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>')
+        z.writestr("3D/3dmodel.model", model)
+
+
 if __name__ == "__main__":
     out = HERE / "out"
     out.mkdir(exist_ok=True)
@@ -142,3 +186,4 @@ if __name__ == "__main__":
           "Dreiecke", sum(len(t) for _, (_, t) in parts))
     write_3mf(out / "weltkugel.3mf", parts, "Weltkugel")
     write_stl(out / "weltkugel.stl", [p for _, p in parts])
+    write_3mf_color(out / "weltkugel_farbig.3mf")
