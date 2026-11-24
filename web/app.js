@@ -653,6 +653,21 @@ const tidyDialog = run(async (name) => {
   catch (e) { closeDialog(); throw e; }
   const warn = p.warnings.length ? `<h3 class="tidy-h">Auffällig</h3><ul class="tidy-notes">${p.warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>` : "";
   const review = p.review.length ? `<h3 class="tidy-h">Kommt nach „${esc(p.review_folder)}“</h3><ul class="tidy-notes">${p.review.map((r) => `<li><b>${esc(leaf(r.file))}</b> (${fmt(r.seconds)}) – ${esc(r.why)}</li>`).join("")}</ul>` : "";
+  const tidyRun = run(async (e) => {
+    e.target.disabled = true; e.target.textContent = "Räume auf …";
+    let r;
+    try { r = await api("/api/library/episodes", { folder: name }); } finally { closeDialog(); }
+    toast([r.episodes ? `${r.episodes} ${r.episodes === 1 ? "Folge" : "Folgen"} angelegt` : "", r.renamed ? `${r.renamed} umbenannt` : "", r.review ? `${r.review} zum Prüfen abgelegt` : ""].filter(Boolean).join(" · ") || "Aufgeräumt");
+    goFolder(r.series);
+  });
+  const renames = p.renames || [];
+  const renameList = renames.length ? `<h3 class="tidy-h">${renames.length === 1 ? "1 Folge bekommt einen kürzeren Namen" : renames.length + " Folgen bekommen kürzere Namen"}</h3><ul class="tidy-notes">${renames.map((r) => `<li><b>${esc(r.to)}</b><br><span class="muted small">bisher: ${esc(r.from)}</span></li>`).join("")}</ul>` : "";
+  if (!p.moves && renames.length) {
+    openDialog(`<h2>Folgen aufräumen</h2><p>Die Folgen sind schon sortiert. Die Namen werden gekürzt und tragen die Folgennummer vorn – danach stehen sie nach Nummer.</p>${renameList}${warn}
+      <p class="muted small">Es wird nur umbenannt. Karten und Figuren bleiben erhalten, gemerkte Abspielstellen der Serie beginnen neu.</p>
+      <div class="actions"><button class="btn" id="tc">Abbrechen</button><button class="btn primary" id="to">Umbenennen</button></div>`);
+    $("#tc", dialog).onclick = closeDialog; $("#to", dialog).onclick = tidyRun; return;
+  }
   if (!p.moves) {
     openDialog(`<h2>Folgen aufräumen</h2><p>Hier ist schon alles sortiert: Jeder Ordner ist eine Folge.</p>${warn}
       <p class="muted small">Stimmt etwas nicht, hilft „Zusammenfassen“ in der Serie oder „Abtrennen“ in einer Folge.</p>
@@ -663,17 +678,11 @@ const tidyDialog = run(async (name) => {
   openDialog(`<h2>Folgen aufräumen</h2>
     ${moved.length ? `<p>Aus ${p.moves - p.review.length} Dateien ${moved.length === 1 ? "wird <b>1 Folge</b>" : `werden <b>${moved.length} Folgen</b>`} in „${esc(leaf(p.series))}“. Jede Geschichte bekommt einen eigenen Ordner, ihre Teile laufen nacheinander durch.</p>` : `<p>Die Folgen stimmen schon. Nur ${p.review.length === 1 ? "eine Datei passt" : p.review.length + " Dateien passen"} nicht zu ${p.review.length === 1 ? "ihrer" : "ihren"} Folge.</p>`}
     <ul class="list tidy-list">${p.episodes.map((e) => `<li><div class="grow"><b>${esc(e.name)}</b><span>${e.files} ${e.files === 1 ? "Datei" : "Teile"}${e.seconds ? " · " + fmt(e.seconds) : ""}${e.stays ? " · bleibt, wo sie ist" : ""}</span></div></li>`).join("")}</ul>
-    ${warn}${review}
+    ${renameList}${warn}${review}
     <p class="muted small">Die Titel werden nur verschoben, nichts wird gelöscht. Leere Album-Ordner verschwinden, ihre Karten zeigen danach auf die Serie. Gemerkte Abspielstellen der Serie beginnen neu.</p>
     <div class="actions"><button class="btn" id="tc">Abbrechen</button><button class="btn primary" id="to">Aufräumen</button></div>`);
   $("#tc", dialog).onclick = closeDialog;
-  $("#to", dialog).onclick = run(async (e) => {
-    e.target.disabled = true; e.target.textContent = "Räume auf …";
-    let r;
-    try { r = await api("/api/library/episodes", { folder: name }); } finally { closeDialog(); }
-    toast([r.episodes ? `${r.episodes} ${r.episodes === 1 ? "Folge" : "Folgen"} angelegt` : "", r.review ? `${r.review} zum Prüfen abgelegt` : ""].filter(Boolean).join(" · ") || "Aufgeräumt");
-    goFolder(r.series);
-  });
+  $("#to", dialog).onclick = tidyRun;
 });
 
 function mergeDialog(name, subs) {

@@ -745,6 +745,9 @@ async def api_episodes_apply(request):
     r = await asyncio.to_thread(planner.apply)
     for old in r["removed"]:
         _retarget(b, old, r["series"])
+    for old, new in r.get("renamed", []):
+        _retarget(b, old, new)
+    r["renamed"] = len(r.get("renamed", []))
     _forget_positions(b, r["series"])
     await asyncio.to_thread(b.player.update_db)
     b.publish_state()

@@ -85,6 +85,29 @@ def _folder_name(stem):
     return name[:120].strip()
 
 
+# „Alles über Reptilien [Wieso Weshalb Warum Folge 64]“ – Album in Klammern hinter dem Titel
+# (die schließende Klammer fehlt, wenn der Name abgeschnitten wurde)
+_BRACKET = re.compile(r"^(?P<story>[^\[\]]+?)\s*\[(?P<album>[^\[\]]*)\]?\s*$")
+_EPISODE_NO = re.compile(r"(?:\b(?P<sub>[A-ZÄÖÜ]{3,})\s+)?Folge\s*(?P<no>\d+)\s*$")
+
+
+def short_name(name):
+    """Kürzt „Titel [Serie Folge 64]“ zu „Folge 64 - Titel“; eine Unterreihe in Großbuchstaben bleibt
+    erhalten („Junior Folge 18 - Die Polizei“). Ohne Folgennummer bleibt nur der Titel. Andere Namen
+    kommen unverändert zurück."""
+    m = _BRACKET.match(str(name or "").strip())
+    if not m:
+        return name
+    story = m.group("story").strip(_EDGE)
+    if not story:
+        return name
+    n = _EPISODE_NO.search(m.group("album").strip())
+    if not n:
+        return story
+    sub = f"{n.group('sub').capitalize()} " if n.group("sub") else ""
+    return f"{sub}Folge {int(n.group('no'))} - {story}"
+
+
 def _key(stem):
     return re.sub(r"[^a-z0-9]+", " ", norm(stem)).strip()
 
@@ -109,6 +132,7 @@ class Planner:
         self.sequence = {}    # direkter Unterordner der Serie -> Folgen in Reihenfolge
         self.loose = []       # Folgen aus losen Dateien der Serie
         self.sources = []     # Ordner, aus denen Dateien wegziehen
+        self.renames = []     # (Ordner Path, neuer Name): vorhandene Folgen mit angehängtem Album im Namen
         self.files = 0
         self._build()
 
@@ -198,7 +222,12 @@ class Planner:
             if single and (d != self.series or not has_subs):
                 self._note(top, d.name if d != self.series else None)
                 self._check(d.name, raw, d)
-                continue                            # ein Ordner = eine Folge: nichts zu tun
+                if d.parent == self.series:         # schon eine Folge – nur der Name wird ggf. kürzer
+                    new = _folder_name(short_name(d.name))
+                    if new and new != d.name and new.casefold() not in self.used and not (self.series / new).exists():
+                        self.used[new.casefold()] = d
+                        self.renames.append((d, new))
+                continue                            # ein Ordner = eine Folge: nichts zu verschieben
             self.sources.append(d)
             for key, items in groups.items():
                 stem = next((r["stem"] for r in items if r["stem"]), "")
@@ -209,7 +238,7 @@ class Planner:
                     file_stem = items[0]["path"].stem.strip()
                     if stem and _key(stem) in _key(file_stem):
                         stem = file_stem
-                name, stays = self._claim(stem or d.name, d)
+                name, stays = self._claim(short_name(stem) if stem else d.name, d)
                 if any(r["doubled"] for r in items):
                     self.warnings.append(f"Doppelter Titel in den Dateien – als „{name}“ einsortiert.")
                 items = self._check(name, items, d)
@@ -253,13 +282,15 @@ class Planner:
     def preview(self):
         return {"series": self.series_rel, "files": self.files, "moves": len(self.moves) + len(self.review),
                 "episodes": [e for e in self.episodes], "kept": self.files - len(self.moves) - len(self.review),
-                "warnings": list(dict.fromkeys(self.warnings)), "review": self.review, "review_folder": REVIEW}
+                "warnings": list(dict.fromkeys(self.warnings)), "review": self.review, "review_folder": REVIEW,
+                "renames": [{"from": d.name, "to": new} for d, new in self.renames]}
 
     def apply(self):
         """Führt den Plan aus. Liefert die aufgelösten Ordner (für Karten) und Zahlen für die Meldung."""
         lib, series = self.lib, self.series
         if not self.moves and not self.review:
-            return {"moved": 0, "episodes": 0, "removed": [], "review": 0, "series": self.series_rel}
+            return {"moved": 0, "episodes": 0, "removed": [], "review": 0, "series": self.series_rel,
+                    "renamed": self._rename()}
         old_order = [d.name for d in lib._subdirs(series)]
         # Kamen alle neuen Folgen aus losen Dateien der Serie und gab es keine eigene Reihenfolge, bleibt es
         # bei der natürlichen Sortierung (Folge 5 vor Folge 38) – sonst stünden die neuen vor den alten.
@@ -315,7 +346,21 @@ class Planner:
             data["folders"] = order
             lib._write_order(series, data)
         return {"moved": len(plan), "episodes": len([m for m in made if m != REVIEW]), "removed": removed,
-                "review": len(self.review), "series": self.series_rel}
+                "review": len(self.review), "series": self.series_rel, "renamed": self._rename()}
+
+    def _rename(self):
+        """Kürzt die Namen vorhandener Folgen. Danach gilt die natürliche Sortierung – die Namen tragen
+        jetzt die Folgennummer vorn. Liefert [(alt, neu)] als Bibliothekspfade (für Karten)."""
+        done = []
+        for d, new in self.renames:
+            if d.is_dir() and not (self.series / new).exists():
+                old = self.lib.rel(d)
+                done.append((old, self.lib.rename(old, new)))
+        if done:
+            data = self.lib._order(self.series)
+            if data.pop("folders", None) is not None:
+                self.lib._write_order(self.series, data)
+        return done
 
 
 def _inherit_cover(library, d, cover):

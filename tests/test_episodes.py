@@ -190,10 +190,28 @@ def main():
     pv = p.preview()
     assert sorted((e["name"], e["files"]) for e in pv["episodes"]) == [("Alles über Rennfahrzeuge", 2), ("Alles über den Zirkus", 2),
                                                                       ("Wir entdecken Deutschland", 3)], pv["episodes"]
+    assert episodes.short_name("Alles über den Zirkus [Wieso? Weshalb? Warum? Folge 44]") == "Folge 44 - Alles über den Zirkus"
+    assert episodes.short_name("Bibi Blocksberg Folge 3") == "Bibi Blocksberg Folge 3"
     assert not pv["warnings"], pv["warnings"]
     p.apply()
     assert names(w) == ["Alles über Rennfahrzeuge", "Alles über den Zirkus", "Wir entdecken Deutschland"], names(w)
     assert len(names(w / "Wir entdecken Deutschland")) == 3
+
+    # Vorhandene Folgen mit angehängtem Album im Namen: kürzen, Folgennummer nach vorn; Karten ziehen mit (über „renamed“)
+    q = h / "Wissen"
+    for folder in ("Alles über Reptilien [Wieso Weshalb Warum Folge 64]", "Die Polizei [Wieso Weshalb Warum JUNIOR Folge 18]",
+                   "Wir entdecken Deutschland [Wieso Weshalb Warum ]", "Wunder der Natur [Wieso Weshalb Warum Folge 61", "Folge 2 - Feuerwehr"):
+        for i in (1, 2):
+            mp3(q / folder / f"{i:02d} - Kapitel {i} - x.mp3", tmp, None, None, 200)
+    lib._write_order(q, {"folders": ["Wunder der Natur [Wieso Weshalb Warum Folge 61"]})
+    p = episodes.Planner(lib, "Hörspiele/Wissen")
+    assert p.preview()["moves"] == 0 and len(p.preview()["renames"]) == 4, p.preview()
+    r = p.apply()
+    assert names(q) == ["Folge 2 - Feuerwehr", "Folge 61 - Wunder der Natur", "Folge 64 - Alles über Reptilien",
+                        "Junior Folge 18 - Die Polizei", "Wir entdecken Deutschland"], names(q)
+    assert ("Hörspiele/Wissen/Die Polizei [Wieso Weshalb Warum JUNIOR Folge 18]", "Hörspiele/Wissen/Junior Folge 18 - Die Polizei") in r["renamed"]
+    assert [d.name for d in lib._subdirs(q)][:3] == ["Folge 2 - Feuerwehr", "Folge 61 - Wunder der Natur", "Folge 64 - Alles über Reptilien"]
+    assert not episodes.Planner(lib, "Hörspiele/Wissen").preview()["renames"]
 
     # Titel zerlegen
     for title, want in (("Sheriff Susannah - Teil 01", ("Sheriff Susannah", 1)), ("Bibi (Kapitel 3 von 12)", ("Bibi", 3)),
