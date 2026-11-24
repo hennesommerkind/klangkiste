@@ -26,6 +26,11 @@ _WORD = r"(?:teil|kapitel|kap\.?|part|pt\.?|track|abschnitt)"
 _PART = re.compile(rf"\s*[-–—:,;|]*\s*[(\[]?\s*{_WORD}\s*(\d+)\s*(?:(?:von|of|/)\s*\d+)?\s*[)\]]?\s*$", re.I)
 # „… (2/10)“, „… 2 von 10“
 _FRACTION = re.compile(r"\s*[-–—:,;|]*\s*[(\[]?\s*(\d+)\s*(?:/|von|of)\s*\d+\s*[)\]]?\s*$", re.I)
+# Kapitel vorn statt hinten (Streaming-Alben): „Kapitel 1 & Kapitel 2 & Kapitel 4.1 - Alles über den Zirkus“
+_NUM = r"\d+(?:\.\d+)?"
+_LEAD_PART = re.compile(rf"^\s*{_WORD}\s*{_NUM}(?:\s*(?:&|\+|,|und|bis|-|–)\s*(?:{_WORD}\s*)?{_NUM})*\s*[-–—:]\s+(?=\S)", re.I)
+# Album in eckigen Klammern am Ende eines Dateinamens: „… [Wieso_ Weshalb_ Warum_ Folge 44]“
+_TAIL_ALBUM = re.compile(r"\s*\[[^\[\]]{3,}\]\s*$")
 _LEAD_SEP = re.compile(r"^\s*\d{1,3}\s*[-–—._)]+\s*(?=\S)")     # „03 - Titel“, „03. Titel“
 _LEAD_NUM = re.compile(r"^\s*\d{1,3}\s+(?=\S)")                 # „03 Titel“ (nur wenn alle so anfangen)
 _EDGE = " \t-–—:,;|_."
@@ -136,14 +141,23 @@ class Planner:
             t = _LEAD_SEP.sub("", r["title"], 1)
             if all_numbered and t == r["title"]:
                 t = _LEAD_NUM.sub("", t, 1)
-            stem, part = split_title(t)
+            if not r["tagged"]:
+                t = _TAIL_ALBUM.sub("", t) or t         # Dateiname mit angehängtem Album: zählt nicht zum Titel
+            lead = _LEAD_PART.match(t)
+            if lead and t[lead.end():].strip(_EDGE):
+                # Kapitelangabe vorn, die Geschichte dahinter: Die Dateien einer Folge unterscheiden sich nur
+                # in den Kapiteln – der Rest ist der Name der Folge.
+                stem, part = t[lead.end():].strip(_EDGE), None
+            else:
+                lead = None
+                stem, part = split_title(t)
             by_album = False
             if not stem or stem.isdigit() or _DUMMY.match(stem):
                 # Titel sagt nichts („Track 03“, „07“): dann entscheidet das Album
                 stem = r["album"] if r["album"] and not _DUMMY.match(r["album"]) else ""
                 by_album = bool(stem)
             stem, doubled = _undouble(stem)
-            r.update(stem=stem, part=part, doubled=doubled, marker=part is not None or by_album)
+            r.update(stem=stem, part=part, doubled=doubled, marker=part is not None or by_album or bool(lead))
             groups.setdefault(_key(stem), []).append(r)
         return raw, groups
 

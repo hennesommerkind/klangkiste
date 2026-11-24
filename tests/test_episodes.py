@@ -175,6 +175,26 @@ def main():
     # „_Bitte prüfen“ läuft nicht mit der Serie mit
     assert not any(episodes.REVIEW in f for f in lib.all_files("Hörspiele/Super Wings"))
 
+    # Kapitel stehen vorn, die Geschichte dahinter (Streaming-Alben); lose Dateien direkt in der Serie,
+    # nach Dateiname sortiert stehen alle „01 - …“ beisammen. Einmal mit Tags, einmal nur über den Dateinamen.
+    w = h / "Wieso weshalb warum"
+    stories = (("Wir entdecken Deutschland", "Wieso_ Weshalb_ Warum_", ("1 & Kapitel 2 & Kapitel 3 & Kapitel 4 & Kapitel 5.1", "5.2 & Kapitel 6", "7")),
+               ("Alles über den Zirkus", "Wieso_ Weshalb_ Warum_ Folge 44", ("1 & Kapitel 2 & Kapitel 3 & Kapitel 4.1", "4.2 & Kapitel 5")),
+               ("Alles über Rennfahrzeuge", "Wieso_ Weshalb_ Warum_ Folge 69", ("1 & Kapitel 2 & Kapitel 3 & Kapitel 4.1", "4.2 & Kapitel 5 & Kapitel 6")))
+    for story, album, chapters in stories:
+        for i, ch in enumerate(chapters, 1):
+            tagged = story != "Alles über Rennfahrzeuge"
+            mp3(w / f"{i:02d} - Kapitel {ch} - {story} [{album}].mp3", tmp, f"Kapitel {ch} - {story}" if tagged else None,
+                album.replace("_", "?") if tagged else None, 240)
+    p = episodes.Planner(lib, "Hörspiele/Wieso weshalb warum")
+    pv = p.preview()
+    assert sorted((e["name"], e["files"]) for e in pv["episodes"]) == [("Alles über Rennfahrzeuge", 2), ("Alles über den Zirkus", 2),
+                                                                      ("Wir entdecken Deutschland", 3)], pv["episodes"]
+    assert not pv["warnings"], pv["warnings"]
+    p.apply()
+    assert names(w) == ["Alles über Rennfahrzeuge", "Alles über den Zirkus", "Wir entdecken Deutschland"], names(w)
+    assert len(names(w / "Wir entdecken Deutschland")) == 3
+
     # Titel zerlegen
     for title, want in (("Sheriff Susannah - Teil 01", ("Sheriff Susannah", 1)), ("Bibi (Kapitel 3 von 12)", ("Bibi", 3)),
                         ("Conni 2/8", ("Conni", 2)), ("Bibi Blocksberg Folge 3", ("Bibi Blocksberg Folge 3", None)),
