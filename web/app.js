@@ -23,6 +23,7 @@ const ICON = {
   camera: '<svg class="icon" viewBox="0 0 24 24"><path d="M4 8a2 2 0 0 1 2-2h2l2-2h4l2 2h2a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><circle cx="12" cy="13" r="3.5"/></svg>',
   move: '<svg class="icon" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M10 13h6M13 10l3 3-3 3"/></svg>',
   vol: '<svg class="icon" viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4zM15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>',
+  clock: '<svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
   music: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>',
 };
 
@@ -405,7 +406,9 @@ const pretty = (p) => String(p || "").split("/").join(" › ");
 const catOf = (p) => CATS.find((c) => p === c || String(p).startsWith(c + "/"));
 const childrenOf = (folders, parent) => folders.filter((f) => f.name.startsWith(parent + "/") && !f.name.slice(parent.length + 1).includes("/"));
 const isMusic = (p) => catOf(p) === "Musik";
-const subLabel = (f) => f.subfolders ? `${f.subfolders} ${isMusic(f.name) ? (f.subfolders === 1 ? "Ordner" : "Ordner") : (f.subfolders === 1 ? "Folge" : "Folgen")}` : `${f.tracks} Titel`;
+const dayLabel = (iso) => { const [y, m, d] = iso.split("-").map(Number); return `${d}.${m}.`; };
+const subLabel = (f) => (f.release ? (f.locked ? "🔒 ab " : "seit ") + dayLabel(f.release) + " · " : "") + subLabel0(f);
+const subLabel0 = (f) => f.subfolders ? `${f.subfolders} ${isMusic(f.name) ? (f.subfolders === 1 ? "Ordner" : "Ordner") : (f.subfolders === 1 ? "Folge" : "Folgen")}` : `${f.tracks} Titel`;
 function tiles(list) {
   return `<div class="folders">${list.map((f) => `<button class="folder" data-f="${esc(f.name)}">
     <div class="figwrap${f.figure_v ? " has-fig" : ""}">${cover(f.name, f.cover, "&v=" + f.cover_v)}${figImg(figUrl(f.name, f.figure_v), f.figure_s)}${f.cards.length ? `<span class="badge">${ICON.card.replace('class="icon"', "")} Karte</span>` : ""}</div>
@@ -585,6 +588,7 @@ const viewFolder = run(async () => {
       <div><h1 style="overflow-wrap:anywhere">${esc(leaf(name))}</h1><p class="muted">${meta} ${f.cards.length ? `<span class="pill accent">${f.cards.length === 1 ? "Karte zugewiesen" : f.cards.length + " Karten"}</span>` : ""}</p>
       <div class="row wrap"><button class="btn primary" id="play" ${f.total_tracks ? "" : "disabled"}>${ICON.play.replace("<svg", '<svg class="icon" style="fill:currentColor;stroke:none"')} ${subs.length ? "Alles abspielen" : "Abspielen"}</button>
       <button class="btn" id="assign">${ICON.card} Karte zuweisen</button>
+      ${subs.length > 1 || (!subs.length && tracks.length > 1) ? `<button class="btn" id="rel" title="Folgen erst ab einem bestimmten Tag freigeben, z. B. als Adventskalender">${ICON.clock} Termine${f.plan ? " ✓" : ""}</button>` : ""}
       ${!music && f.total_tracks ? `<button class="btn" id="tidy" title="Dateien nach Geschichten in Folgen sortieren">${ICON.sort} Folgen aufräumen</button>` : ""}
       <button class="iconbtn" id="sub" aria-label="${music ? "Unterordner anlegen" : "Folge anlegen"}" title="${music ? "Unterordner anlegen" : "Folge anlegen"}">${ICON.plus}</button>
       <button class="iconbtn" id="ren" aria-label="Umbenennen" title="Umbenennen">${ICON.edit}</button>
@@ -618,6 +622,7 @@ const viewFolder = run(async () => {
   });
   $("#del").onclick = run(async () => { if (await ask("Ordner löschen?", `„${leaf(name)}“ mit ${f.total_tracks} Titeln${subs.length ? ` und ${subs.length} ${subWord}` : ""} wird endgültig gelöscht. Zugewiesene Karten werden frei.`, "Löschen", true)) { await api("/api/library/delete", { folder: name }); toast("Ordner gelöscht"); goUp(name); } });
   $$("[data-del]").forEach((b) => b.onclick = run(async () => { const t = tracks[b.dataset.del]; if (await ask("Titel löschen?", t.file, "Löschen", true)) { await api("/api/library/delete", { folder: name, file: t.file }); viewFolder(); } }));
+  if ($("#rel")) $("#rel").onclick = () => releaseDialog(name);
   if ($("#tidy")) $("#tidy").onclick = () => tidyDialog(name);
   if ($("#mergef")) $("#mergef").onclick = () => mergeDialog(name, subs);
   if ($("#splitt")) $("#splitt").onclick = () => splitDialog(name, tracks);
@@ -643,6 +648,41 @@ const viewFolder = run(async () => {
   dropTarget($(".detail-head .figwrap"), dropOnFolder(name, figInfo(f), viewFolder), "Bild = Titelbild · 3D-Datei = Figur");
   dropTarget($("#fig"), (files) => figureDialog(name, figInfo(f), viewFolder, files), "Als Figur");
   if ($("#cvdel")) $("#cvdel").onclick = run(async () => { if (await ask("Titelbild entfernen?", "Danach wird – falls vorhanden – das Bild aus den Musikdateien angezeigt.", "Entfernen", true)) { await api("/api/cover?folder=" + encodeURIComponent(name), {}, "DELETE"); viewFolder(); } });
+});
+
+// ---------- Erscheinungstermine (Adventskalender) ----------
+const releaseDialog = run(async (name) => {
+  const q = "/api/release?folder=" + encodeURIComponent(name);
+  const plan = await api(q);
+  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const t = new Date(), dec = new Date(t.getFullYear() + (t.getMonth() === 11 && t.getDate() > 24 ? 1 : 0), 11, 1);
+  const first = plan.items.find((i) => i.date);
+  openDialog(`<h2>Termine für „${esc(leaf(name))}“</h2>
+    <p class="muted small" style="margin-top:-4px">Jede Folge erscheint an ihrem Tag. Die Figur spielt dann die neueste; am Display und mit den Knöpfen sind nur erschienene Folgen erreichbar. Hier in der Oberfläche kannst du weiterhin alles abspielen.</p>
+    <div class="row wrap" style="gap:10px;align-items:flex-end">
+      <label class="field" style="margin:0"><span>Erste Folge</span><input type="date" id="r-start" value="${first ? first.date : iso(dec)}"></label>
+      <label class="field" style="margin:0;width:6.5em"><span>alle … Tage</span><input type="number" id="r-step" min="1" max="31" value="1"></label>
+      <label class="field" style="margin:0"><span>Letzte Folge <span class="muted">(wenn abweichend)</span></span><input type="date" id="r-last"></label>
+      <button class="btn" id="r-fill">Eintragen</button></div>
+    <ul class="list" style="margin:14px 0;max-height:42vh;overflow:auto">${plan.items.map((it, i) => `<li><span class="muted small" style="min-width:1.8em;text-align:right">${i + 1}</span><div class="grow"><b style="font-weight:600;overflow-wrap:anywhere">${esc(it.name)}</b></div><input type="date" data-r="${i}" value="${it.date}" aria-label="Erscheint am" style="width:auto;flex:none;min-height:38px;padding:6px 8px"></li>`).join("")}</ul>
+    <label class="field" style="width:9em"><span>Uhrzeit</span><input type="time" id="r-time" value="${plan.time}"></label>
+    <p class="muted small">Folgen ohne Datum sind sofort da. Die Box holt die Uhrzeit aus dem Netz – ohne WLAN erscheint eine neue Folge erst, wenn sie wieder verbunden ist.</p>
+    <div class="actions">${plan.active ? `<button class="btn" id="r-off" style="margin-right:auto">Termine entfernen</button>` : ""}<button class="btn" id="r-x">Abbrechen</button><button class="btn primary" id="r-ok">Speichern</button></div>`);
+  const rows = $$("[data-r]", dialog);
+  $("#r-fill", dialog).onclick = () => {
+    const s = $("#r-start", dialog).value, step = Math.max(1, +$("#r-step", dialog).value || 1), last = $("#r-last", dialog).value;
+    if (!s) return toast("Bitte den Tag der ersten Folge angeben", "error");
+    const [y, m, d] = s.split("-").map(Number);
+    rows.forEach((r, i) => { r.value = iso(new Date(y, m - 1, d + i * step)); });
+    if (last && rows.length) rows[rows.length - 1].value = last;
+  };
+  const save = (dates) => run(async () => {
+    await api(q, { time: $("#r-time", dialog).value || "06:00", dates });
+    closeDialog(); toast(Object.keys(dates).length ? "Termine gespeichert" : "Termine entfernt"); viewFolder();
+  })();
+  $("#r-x", dialog).onclick = closeDialog;
+  $("#r-ok", dialog).onclick = () => save(Object.fromEntries(rows.map((r, i) => [plan.items[i].name, r.value]).filter(([, v]) => v)));
+  if ($("#r-off", dialog)) $("#r-off", dialog).onclick = () => save({});
 });
 
 // ---------- Folgen aufräumen, zusammenfassen, abtrennen ----------

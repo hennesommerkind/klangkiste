@@ -96,6 +96,19 @@ Liegt die Automatik daneben: **Zusammenfassen** (in der Serie) legt Folgen zusam
 
 Unter „Läuft“ zeigt eine Serie eine Zeile pro Folge; die laufende ist aufgeklappt.
 
+### Erscheinungstermine (Adventskalender)
+
+Folgen einer Serie können nach und nach erscheinen: im Serienordner **Termine** öffnen und jeder Folge
+einen Tag geben („Erste Folge“, „alle … Tage“ und **Eintragen** füllt die Liste, jeder Tag lässt sich danach
+einzeln ändern). Ab dann gilt an der Box:
+
+- Die Figur der Serie spielt die **zuletzt erschienene** Folge (dort wird auch fortgesetzt).
+- Am Display und mit den Knöpfen sind nur erschienene Folgen erreichbar; nach der neuesten ist Schluss.
+- In der Oberfläche tragen noch nicht erschienene Folgen ein Schloss, lassen sich dort aber einzeln abspielen.
+
+Die Termine liegen als `.erscheinen.json` im Serienordner. Die Box holt die Uhrzeit aus dem Netz; sie merkt
+sich die zuletzt gesehene Zeit, damit erschienene Folgen nach einem Start ohne WLAN nicht wieder verschwinden.
+
 ## MQTT
 
 Status (JSON, retained): `klangkiste/state` · Erreichbarkeit: `klangkiste/status` ·

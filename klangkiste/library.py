@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import unicodedata
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 AUDIO = {".mp3", ".m4a", ".m4b", ".aac", ".ogg", ".oga", ".opus", ".flac", ".wav", ".wma"}
@@ -14,6 +15,9 @@ FIGSIZE = ".figur.json"  # Größe der Figur auf dem Cover (Faktor, 1 = Standard
 FIG_MIN, FIG_MAX = 0.5, 1.5
 CATEGORIES = ("Hörspiele", "Musik")
 REVIEW = "_Bitte prüfen"   # Ablage fürs Aufräumen: sichtbar in der Oberfläche, aber nicht Teil der Serie beim Abspielen
+RELEASE_FILE = ".erscheinen.json"   # Erscheinungstermine der Folgen einer Serie (z. B. Adventskalender)
+RELEASE_TIME = "06:00"
+CLOCK_FILE = ".uhr"                 # zuletzt gesehene Uhrzeit: die Box hat keine eigene Uhr (siehe Library.now)
 ORDER_FILE = ".reihenfolge.json"   # eigene Reihenfolge pro Ordner; wandert mit Sicherung und Umbenennen mit
 
 
@@ -116,6 +120,122 @@ class Library:
             data[kind] = [new if n == old else n for n in data[kind]]
             self._write_order(d, data)
 
+    # ---------- Erscheinungstermine ----------
+    def now(self):
+        """Aktuelle Zeit, aber nie früher als schon einmal gesehen: Der Raspberry Pi hat keine eigene Uhr
+        und kennt nach einem Start ohne Netz das Datum nicht. Erschienene Folgen verschwinden so nicht wieder."""
+        n = datetime.now()
+        f = self.root / CLOCK_FILE
+        floor = getattr(self, "_clock", None)
+        if floor is None:
+            try:
+                floor = datetime.fromisoformat(f.read_text("utf-8").strip())
+            except (OSError, ValueError):
+                floor = datetime.min
+            self._clock = floor
+        if n > floor + timedelta(minutes=30):
+            self._clock = n
+            try:
+                f.write_text(n.isoformat(timespec="minutes"), "utf-8")
+            except OSError:
+                pass
+        return max(n, self._clock)
+
+    @staticmethod
+    def _release(d):
+        try:
+            data = json.loads((d / RELEASE_FILE).read_text("utf-8"))
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _entries(self, d):
+        """Was in einem Ordner einzeln erscheinen kann: seine Folgen (Unterordner), sonst seine Titel."""
+        subs = [x.name for x in self._subdirs(d) if x.name != REVIEW]
+        return subs or [f.name for f in self._audio_files(d)]
+
+    def _due(self, plan, name, now):
+        day = (plan.get("dates") or {}).get(name)
+        if not day:
+            return True
+        try:
+            h, m = (int(x) for x in str(plan.get("time") or RELEASE_TIME).split(":"))
+            return now >= datetime.combine(date.fromisoformat(day), datetime.min.time()).replace(hour=h, minute=m)
+        except ValueError:
+            return True
+
+    def locked(self, d):
+        """Namen der Einträge eines Ordners, die noch nicht erschienen sind."""
+        plan = self._release(d)
+        if not plan.get("dates"):
+            return set()
+        now = self.now()
+        return {n for n in plan["dates"] if not self._due(plan, n, now)}
+
+    def is_locked(self, folder):
+        folder = str(folder or "").strip("/")
+        if "/" not in folder:
+            return False
+        parent, name = folder.rsplit("/", 1)
+        try:
+            return name in self.locked(self.path(parent))
+        except LibraryError:
+            return False
+
+    def release_plan(self, folder):
+        """Termine einer Serie für die Oberfläche: alle Einträge in Abspielreihenfolge."""
+        d = self.path(folder)
+        plan = self._release(d)
+        dates, now = plan.get("dates") or {}, self.now()
+        return {"time": plan.get("time") or RELEASE_TIME, "active": bool(dates),
+                "items": [{"name": n, "date": dates.get(n, ""), "locked": not self._due(plan, n, now)}
+                          for n in self._entries(d)]}
+
+    def set_release(self, folder, dates, time=RELEASE_TIME):
+        """Speichert die Termine ({Name: "2026-12-01"}); ohne Termine wird der Plan entfernt."""
+        d = self.path(folder)
+        if not d.is_dir() or d == self.root or self.is_category(self.rel(d)):
+            raise LibraryError("Ordner nicht gefunden")
+        if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", str(time or "")):
+            raise LibraryError("Bitte eine Uhrzeit wie 06:00 angeben")
+        known, clean = set(self._entries(d)), {}
+        for name, day in (dates or {}).items():
+            if name in known and day:
+                try:
+                    clean[name] = date.fromisoformat(str(day)).isoformat()
+                except ValueError:
+                    raise LibraryError(f"Ungültiges Datum bei „{name}“")
+        p = d / RELEASE_FILE
+        if not clean:
+            p.unlink(missing_ok=True)
+            return
+        tmp = d / (RELEASE_FILE + ".tmp")
+        tmp.write_text(json.dumps({"time": time, "dates": clean}, ensure_ascii=False, indent=1), "utf-8")
+        os.replace(tmp, p)
+
+    def _rename_in_release(self, d, old, new):
+        plan = self._release(d)
+        if old in (plan.get("dates") or {}):
+            plan["dates"] = {(new if k == old else k): v for k, v in plan["dates"].items()}
+            (d / RELEASE_FILE).write_text(json.dumps(plan, ensure_ascii=False, indent=1), "utf-8")
+
+    def newest(self, folder):
+        """Zuletzt erschienener Eintrag einer Serie mit Terminen (Pfad der Folge oder Datei) – sonst None.
+        Dort beginnt die Figur: beim Adventskalender das Türchen von heute."""
+        try:
+            d = self.path(folder)
+        except LibraryError:
+            return None
+        plan = self._release(d)
+        if not d.is_dir() or not plan.get("dates"):
+            return None
+        now = self.now()
+        out = [n for n in self._entries(d) if n in plan["dates"] and self._due(plan, n, now)]
+        if not out:
+            return None
+        best = max(out, key=lambda n: plan["dates"][n])     # bei gleichem Tag der erste in der Reihenfolge
+        return f"{str(folder).strip('/')}/{best}"
+
     def find_cover(self, d):
         imgs = [f for f in d.iterdir() if f.is_file() and f.suffix.lower() in IMAGES and not f.name.startswith(".")]
         if not imgs:
@@ -128,6 +248,8 @@ class Library:
         out = []
 
         def walk(d):
+            hidden = self.locked(d)
+            plan = self._release(d).get("dates") or {}
             for sub in self._subdirs(d):
                 rel = self.rel(sub)
                 files = [f for f in sub.iterdir() if f.is_file()]
@@ -135,6 +257,9 @@ class Library:
                 img = self.find_cover(sub)
                 if not self.is_category(rel):
                     out.append({
+                        "release": plan.get(sub.name, ""),
+                        "locked": sub.name in hidden,
+                        "plan": bool(self._release(sub).get("dates")),
                         "name": rel,
                         "tracks": len(tracks),
                         "size": sum(f.stat().st_size for f in tracks),
@@ -176,9 +301,10 @@ class Library:
         out = []
 
         def walk(x):
-            out.extend(self.rel(f) for f in self._audio_files(x))
-            for sub in self._subdirs(x):
-                if sub.name != REVIEW:      # Dateien zum Prüfen laufen nicht mit der Serie mit
+            hidden = self.locked(x)         # noch nicht erschienene Folgen (nur an der Serie selbst geprüft:
+            out.extend(self.rel(f) for f in self._audio_files(x) if f.name not in hidden)   # eine Folge direkt
+            for sub in self._subdirs(x):                                                     # starten geht immer)
+                if sub.name != REVIEW and sub.name not in hidden:      # Dateien zum Prüfen laufen nicht mit
                     walk(sub)
 
         walk(d)
@@ -206,6 +332,7 @@ class Library:
             raise LibraryError("Diesen Namen gibt es schon")
         src.rename(dst)
         self._rename_in_order(src.parent, "folders", src.name, dst.name)
+        self._rename_in_release(src.parent, src.name, dst.name)
         return self.rel(dst)
 
     def delete_folder(self, folder):
@@ -252,6 +379,7 @@ class Library:
             raise LibraryError("Diesen Namen gibt es schon")
         src.rename(dst)
         self._rename_in_order(src.parent, "tracks", src.name, dst.name)
+        self._rename_in_release(src.parent, src.name, dst.name)
 
     def upload_target(self, folder, filename, episode=False):
         """Zielpfad für einen Upload; erlaubt Audio- und Bilddateien.

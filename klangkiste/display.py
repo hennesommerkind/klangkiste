@@ -271,7 +271,9 @@ def _level(library, current, up=False):
         return current.rsplit("/", 1)[0] if "/" in current else "", [], 0
     parent = current.rsplit("/", 1)[0] if "/" in current else "Hörspiele"
     try:
-        names = [d.name for d in library._subdirs(library.path(parent)) if d.name != REVIEW]
+        d = library.path(parent)
+        hidden = library.locked(d)          # noch nicht erschienene Folgen stehen nicht zur Auswahl
+        names = [x.name for x in library._subdirs(d) if x.name != REVIEW and x.name not in hidden]
     except (LibraryError, OSError):
         names = []
     leaf = current.rsplit("/", 1)[-1]

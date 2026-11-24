@@ -214,7 +214,9 @@ class Player:
             c.play(p)
         return True
 
-    def play_folder(self, folder, shuffle=False, restart=False):
+    def play_folder(self, folder, shuffle=False, restart=False, start=None):
+        """start: Folge (Pfad), bei der begonnen wird – für Serien mit Erscheinungsterminen die neueste.
+        Fortgesetzt wird dann nur, wenn die gemerkte Stelle in dieser Folge liegt."""
         cfg = self.store.config["audio"]
         self._save_resume(force=True)
         if restart or shuffle or not cfg["resume"] or not self.resumable(folder):
@@ -244,7 +246,13 @@ class Player:
             n = int(c.status().get("playlistlength", 0))
             if n == 0:
                 raise ValueError(f"Ordner „{folder}“ enthält keine Titel")
-            if r and 0 <= r.get("pos", 0) < n:
+            first = None
+            if start and added and not shuffle:
+                own = [j for j, f in enumerate(files) if f == start or f.startswith(start + "/")]
+                first = own[0] if own else None
+            if first is not None and not (r and r.get("pos", -1) in own):
+                c.play(first)
+            elif r and 0 <= r.get("pos", 0) < n:
                 c.play(r["pos"])
                 if r.get("elapsed", 0) > 5:
                     try:
@@ -269,7 +277,8 @@ class Player:
         if len(parts) < 3:
             return self.play_folder(folder)
         series = "/".join(parts[:-1])
-        if self.current_folder != series or not self._queue_files:
+        inside = lambda: any(f.startswith(folder + "/") for f in self._queue_files or [])  # noqa: E731
+        if self.current_folder != series or not inside():   # auch: seit dem Laden neu erschienene Folge
             self.play_folder(series, restart=True)
 
         def go(c):

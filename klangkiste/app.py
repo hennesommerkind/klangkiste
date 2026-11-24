@@ -437,13 +437,16 @@ class Box:
             self.library.path(value)
             self._take_over_from_spotify()
             value = str(value).strip("/")
-            if self._keeps_card(value) and value.rsplit("/", 1)[0] == self._card_folder():
+            if (self._keeps_card(value) and value.rsplit("/", 1)[0] == self._card_folder()
+                    and not self.library.is_locked(value)):   # noch nicht erschienen: nur einzeln (Vorhören)
                 p.play_episode(value)       # Folge aus der Serie der aufgelegten Figur: Serie bleibt die Abspielliste
             else:
                 p.play_folder(value, restart=False)
         elif action == "play_episode":
             self._take_over_from_spotify()
             self._keeps_card(str(value).strip("/"))
+            if self.library.is_locked(value):
+                raise ValueError("Diese Folge ist noch nicht erschienen")
             p.play_episode(value)
         elif action == "play_url":
             self._check_url(value)
@@ -522,6 +525,10 @@ class Box:
         st = self.player.state
         target = card.get("target", "")
         same = self.active_card == card_id and target in (st.get("folder"), st.get("url"))
+        newest = self.library.newest(target) if card.get("type") != "url" else None
+        if same and newest and not any(f == newest or f.startswith(newest + "/")
+                                       for f in self.player._queue_files or []):
+            same = False        # seit dem letzten Auflegen ist eine neue Folge erschienen
         if same and st.get("state") == "play":
             return
         if same and st.get("state") == "pause":
@@ -530,7 +537,7 @@ class Box:
         if card.get("type") == "url":
             self.player.play_url(target)
         else:
-            self.player.play_folder(target, shuffle=bool(card.get("shuffle")))
+            self.player.play_folder(target, shuffle=bool(card.get("shuffle")), start=newest)
         self.active_card = card_id
 
     def on_remove(self):
@@ -918,6 +925,23 @@ async def api_cover_set(request):
     if len(data) > 15_000_000:
         raise ValueError("Das Bild ist zu groß (max. 15 MB)")
     box(request).library.set_cover(request.query["folder"], bytes(data), Path(part.filename).suffix)
+    return ok()
+
+
+@routes.get("/api/release")
+async def api_release(request):
+    """Erscheinungstermine der Folgen einer Serie (z. B. Adventskalender)."""
+    return web.json_response(await asyncio.to_thread(box(request).library.release_plan, request.query["folder"]))
+
+
+@routes.post("/api/release")
+async def api_release_set(request):
+    b = box(request)
+    d = await request.json()
+    await asyncio.to_thread(b.library.set_release, request.query["folder"], d.get("dates") or {},
+                            d.get("time") or "06:00")
+    display._strips.clear()
+    b.publish_state()
     return ok()
 
 
