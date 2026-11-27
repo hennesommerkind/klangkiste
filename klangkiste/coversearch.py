@@ -6,6 +6,7 @@ nur von deren Bild-Servern – keine beliebigen Adressen.
 """
 import asyncio
 import io
+import ipaddress
 import logging
 from urllib.parse import urlparse
 
@@ -80,9 +81,23 @@ async def search(q):
 
 
 def allowed(url):
+    """Bild-Server der beiden Kataloge (Suchergebnisse)."""
     p = urlparse(str(url or ""))
     host = (p.hostname or "").lower()
     return p.scheme == "https" and any(host.endswith(h) for h in HOSTS)
+
+
+async def _public(url):
+    """Eingefügte Bildadresse: nur http(s) zu Rechnern im Internet – nie ins Heimnetz oder auf die Box selbst."""
+    p = urlparse(str(url or "").strip())
+    if p.scheme not in ("http", "https") or not p.hostname:
+        return False
+    try:
+        infos = await asyncio.get_running_loop().getaddrinfo(p.hostname, p.port or (443 if p.scheme == "https" else 80))
+    except OSError:
+        return False
+    addrs = {ipaddress.ip_address(i[4][0].split("%")[0]) for i in infos}
+    return bool(addrs) and all(a.is_global for a in addrs)
 
 
 def square_jpeg(data, size=SIZE):
@@ -100,24 +115,50 @@ def square_jpeg(data, size=SIZE):
     return buf.getvalue()
 
 
-async def download(url):
-    if not allowed(url):
-        raise ValueError("Bilder werden nur aus den Suchergebnissen übernommen")
+async def _read(r):
+    """Ganze Antwort lesen (read(n) liefert nur, was gerade da ist – bei großen Bildern ein Bruchstück)."""
+    buf = bytearray()
+    async for chunk in r.content.iter_chunked(65536):
+        buf += chunk
+        if len(buf) > MAX_BYTES:
+            raise ValueError("Das Bild ist zu groß")
+    return bytes(buf)
+
+
+async def download(url, pasted=False):
+    """Bild laden und quadratisch zuschneiden. Suchergebnisse nur von den Katalogen; eingefügte Adressen
+    von jedem Rechner im Internet, Weiterleitungen werden einzeln geprüft."""
+    url = str(url or "").strip()
+    if not (allowed(url) or (pasted and await _public(url))):
+        raise ValueError("Diese Adresse kann die Box nicht laden" if pasted
+                         else "Bilder werden nur aus den Suchergebnissen übernommen")
     try:
         async with aiohttp.ClientSession(timeout=TIMEOUT, headers={"User-Agent": UA}) as s:
-            async with s.get(url) as r:
-                r.raise_for_status()
-                if not (r.content_type or "").startswith("image/"):
-                    raise ValueError("Unter dieser Adresse liegt kein Bild")
-                data = await r.content.read(MAX_BYTES + 1)
+            for _ in range(4):
+                async with s.get(url, allow_redirects=False) as r:
+                    if r.status in (301, 302, 303, 307, 308) and r.headers.get("Location"):
+                        url = str(r.url.join(aiohttp.client.URL(r.headers["Location"])))
+                        if not (allowed(url) or (pasted and await _public(url))):
+                            raise ValueError("Die Adresse leitet an eine Stelle weiter, die die Box nicht laden darf")
+                        continue
+                    r.raise_for_status()
+                    if not (r.content_type or "").startswith("image/"):
+                        raise ValueError("Unter dieser Adresse liegt kein Bild")
+                    data = await _read(r)
+                    break
+            else:
+                raise ValueError("Zu viele Weiterleitungen")
     except (aiohttp.ClientError, asyncio.TimeoutError) as e:
         log.warning("Cover laden %s: %s", url, e)
         raise ConnectionError("Das Bild konnte nicht geladen werden – bitte ein anderes wählen") from e
-    if len(data) > MAX_BYTES:
-        raise ValueError("Das Bild ist zu groß")
+    return await convert(data)
+
+
+async def convert(data):
     try:
         return await asyncio.to_thread(square_jpeg, data)
     except ImportError:              # ohne Pillow das Bild unverändert nehmen
         return data
     except Exception as e:
+        log.warning("Cover umwandeln: %s", e)
         raise ValueError("Das Bild ist beschädigt – bitte ein anderes wählen") from e

@@ -312,3 +312,6 @@ body.dragging .detail-head .figwrap, body.dragging .folders .figwrap, body.dragg
 .cs-grid.busy .cs-item:not(.loading) { opacity: .4; pointer-events: none; }
 .cs-item.loading img { animation: cspulse 1s ease-in-out infinite alternate; }
 @keyframes cspulse { to { opacity: .45; } }
+.cs-paste { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 10px; }
+.cs-paste label { display: block; color: var(--muted); }
+.cs-paste .cs-form { margin: 6px 0 0; }

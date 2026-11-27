@@ -941,7 +941,7 @@ async def api_cover_fetch(request):
     d = await request.json()
     b = box(request)
     b.library.path(d["folder"])                     # Ordner prüfen, bevor etwas geladen wird
-    data = await coversearch.download(d["url"])
+    data = await coversearch.download(d["url"], pasted=bool(d.get("pasted")))
     b.library.set_cover(d["folder"], data, ".jpg")
     b.publish_state()                               # Bild am Display und in „Läuft“ aktualisieren
     return ok()

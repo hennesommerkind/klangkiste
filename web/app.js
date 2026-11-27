@@ -586,7 +586,7 @@ const viewFolder = run(async () => {
   const meta = [subs.length ? `${subs.length} ${music ? "Unterordner" : subs.length === 1 ? "Folge" : "Folgen"}` : "", `${f.total_tracks} Titel`, tracks.length ? size(total) : ""].filter(Boolean).join(" · ");
   main.innerHTML = `<nav class="crumbs">${ICON.back}${crumbs}</nav>
     <div class="detail-head"><div><div class="figwrap${f.figure_v ? " has-fig" : ""}">${cover(name, true, "&v=" + f.cover_v)}${figImg(figUrl(name, f.figure_v), f.figure_s)}</div>
-        <div class="row cvrow"><button class="btn small" id="cv">${ICON.camera} Titelbild</button><button class="btn small" id="cvweb" title="Titelbild im Netz suchen">${ICON.search} Suchen</button>${f.custom_cover ? `<button class="iconbtn" id="cvdel" aria-label="Titelbild entfernen" title="Titelbild entfernen" style="width:36px;height:36px">${ICON.trash}</button>` : ""}<button class="btn small" id="fig">${FIGICON} Figur</button></div></div>
+        <div class="row cvrow"><button class="btn small" id="cv">${ICON.camera} Titelbild</button><button class="btn small" id="cvweb" title="Titelbild im Netz suchen oder aus der Zwischenablage einfügen (am PC auch Strg+V)">${ICON.search} Suchen</button>${f.custom_cover ? `<button class="iconbtn" id="cvdel" aria-label="Titelbild entfernen" title="Titelbild entfernen" style="width:36px;height:36px">${ICON.trash}</button>` : ""}<button class="btn small" id="fig">${FIGICON} Figur</button></div></div>
       <div><h1 style="overflow-wrap:anywhere">${esc(leaf(name))}</h1><p class="muted">${meta} ${f.cards.length ? `<span class="pill accent">${f.cards.length === 1 ? "Karte zugewiesen" : f.cards.length + " Karten"}</span>` : ""}</p>
       <div class="row wrap"><button class="btn primary" id="play" ${f.total_tracks ? "" : "disabled"}>${ICON.play.replace("<svg", '<svg class="icon" style="fill:currentColor;stroke:none"')} ${subs.length ? "Alles abspielen" : "Abspielen"}</button>
       <button class="btn" id="assign">${ICON.card} Karte zuweisen</button>
@@ -669,11 +669,44 @@ function coverQuery(name) {
   return clean(series + " " + ep);
 }
 
+/** Aus der Zwischenablage: Bild → hochladen; Text mit Bildadresse → die Box lädt sie */
+const pasteCover = run(async (name, data) => {
+  const file = [...(data?.files || [])].find((f) => f.type.startsWith("image/"))
+    || [...(data?.items || [])].map((i) => i.kind === "file" && i.type.startsWith("image/") ? i.getAsFile() : null).find(Boolean);
+  if (file) { await uploadCover(name, file); return done(name); }
+  const text = (data?.getData?.("text/uri-list") || data?.getData?.("text/plain") || "").split(/\s+/).find((t) => /^https?:\/\//i.test(t));
+  if (!text) throw new Error("In der Zwischenablage ist kein Bild und keine Bildadresse");
+  toast("Lade Bild …");
+  await api("/api/cover/fetch", { folder: name, url: text, pasted: true });
+  toast("Titelbild gespeichert"); done(name);
+  function done(n) { closeDialog(); if (S.folder === n) viewFolder(); }
+});
+/** Knopf „Aus Zwischenablage“ – nur wo der Browser das Lesen erlaubt (sichere Verbindung) */
+async function readClipboard(name) {
+  const items = await navigator.clipboard.read();
+  for (const it of items) {
+    const t = it.types.find((x) => x.startsWith("image/"));
+    if (t) { const b = await it.getType(t); return pasteCover(name, { files: [new File([b], "cover", { type: t })] }); }
+  }
+  const text = await navigator.clipboard.readText();
+  return pasteCover(name, { getData: () => text });
+}
+// Am Computer: Strg+V in der Ordneransicht setzt das Titelbild
+document.addEventListener("paste", (e) => {
+  if (!S.folder || dialog.open || e.target.closest?.("input, textarea, [contenteditable]")) return;
+  const d = e.clipboardData;
+  if (![...(d?.items || [])].some((i) => i.type.startsWith("image/")) && !/^https?:\/\//i.test((d?.getData("text/plain") || "").trim())) return;
+  e.preventDefault(); pasteCover(S.folder, d);
+});
+
 function coverSearchDialog(name) {
-  openDialog(`<h2>Titelbild im Netz suchen</h2>
+  const canRead = !!navigator.clipboard?.read && window.isSecureContext;
+  openDialog(`<h2>Titelbild suchen oder einfügen</h2>
     <form id="cs-f" class="row cs-form"><input type="search" id="cs-q" value="${esc(coverQuery(name))}" aria-label="Suchbegriff" enterkeyhint="search"><button class="btn primary">${ICON.search} Suchen</button></form>
     <div id="cs-res" class="cs-grid" aria-live="polite"></div>
     <p class="muted small">Gesucht wird im Katalog von Apple und bei Deezer. Antippen übernimmt das Bild als Titelbild (quadratisch, 800 px).</p>
+    <div class="cs-paste"><label for="cs-p" class="small"><b>Aus der Zwischenablage</b> – kopiertes Bild oder Bildadresse: ins Feld tippen und einfügen (am PC Strg+V)</label>
+      <div class="row cs-form"><input type="text" id="cs-p" placeholder="Hier einfügen" autocomplete="off" inputmode="url" enterkeyhint="go">${canRead ? `<button class="btn" id="cs-clip" type="button">Einfügen</button>` : ""}</div></div>
     <div class="actions"><button class="btn" id="cs-x">Schließen</button></div>`);
   const res = $("#cs-res", dialog), q = $("#cs-q", dialog);
   $("#cs-x", dialog).onclick = closeDialog;
@@ -698,6 +731,11 @@ function coverSearchDialog(name) {
     }));
   };
   $("#cs-f", dialog).onsubmit = (e) => { e.preventDefault(); q.blur(); search(); };
+  const pf = $("#cs-p", dialog);
+  pf.addEventListener("paste", (e) => { e.preventDefault(); pf.value = ""; pasteCover(name, e.clipboardData); });
+  // Manche Tastaturen fügen Text ohne Einfüge-Ereignis ein: eine eingetippte/eingefügte Adresse mit Enter übernehmen
+  pf.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); const v = pf.value.trim(); if (v) pasteCover(name, { getData: () => v }); } });
+  if ($("#cs-clip", dialog)) $("#cs-clip", dialog).onclick = run(() => readClipboard(name));
   search();
 }
 

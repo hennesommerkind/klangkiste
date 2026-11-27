@@ -50,6 +50,26 @@ async def main():
     async def image(r):
         return web.Response(body=png(1400, 1000), content_type="image/png")
 
+    async def big(r):
+        # großes Bild in vielen Stücken mit Pausen – so wie aus dem Netz (früher kam nur das erste Stück an)
+        import os
+        b = io.BytesIO()
+        Image.frombytes("RGB", (1000, 1000), os.urandom(3_000_000)).save(b, "PNG")
+        data = b.getvalue()
+        resp = web.StreamResponse(headers={"Content-Type": "image/png"})
+        await resp.prepare(r)
+        for i in range(0, len(data), 32768):
+            await resp.write(data[i:i + 32768])
+            await asyncio.sleep(0.002)
+        await resp.write_eof()
+        return resp
+
+    async def redir_priv(r):
+        raise web.HTTPFound("/priv/img.png")
+
+    async def redir_pub(r):
+        raise web.HTTPFound("/pub/img.png")
+
     async def notimage(r):
         return web.Response(text="<html>", content_type="text/html")
 
@@ -59,6 +79,11 @@ async def main():
     app.router.add_get("/broken", broken)
     app.router.add_get("/img.png", image)
     app.router.add_get("/page", notimage)
+    app.router.add_get("/big.png", big)
+    app.router.add_get("/pub/img.png", image)
+    app.router.add_get("/priv/img.png", image)
+    app.router.add_get("/pub/to-priv", redir_priv)
+    app.router.add_get("/pub/to-pub", redir_pub)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "127.0.0.1", 8771)
@@ -115,7 +140,35 @@ async def main():
             raise AssertionError("Verbindungsfehler nicht gemeldet")
         except ConnectionError:
             pass
+        big_jpg = await cs.download(base + "/big.png")
+        assert Image.open(io.BytesIO(big_jpg)).size == (800, 800)
         cs.allowed = real
+        # Eingefügte Adressen: nie ins Heimnetz, Weiterleitungen werden geprüft
+        for bad in ("http://127.0.0.1:8771/img.png", "http://192.168.178.63/api/cover", "http://localhost:8771/img.png",
+                    "ftp://example.org/x.jpg", "nix"):
+            assert not await cs._public(bad), bad
+            try:
+                await cs.download(bad, pasted=True)
+                raise AssertionError("Heimnetz-Adresse geladen: " + bad)
+            except ValueError:
+                pass
+        real_pub = cs._public
+
+        async def fake_pub(u):
+            return u.startswith(base + "/pub/")
+        cs._public = fake_pub
+        assert Image.open(io.BytesIO(await cs.download(base + "/pub/to-pub", pasted=True))).size == (800, 800)
+        try:
+            await cs.download(base + "/pub/to-priv", pasted=True)
+            raise AssertionError("Weiterleitung ins Heimnetz gefolgt")
+        except ValueError:
+            pass
+        try:
+            await cs.download(base + "/pub/img.png")      # ohne „eingefügt“ gilt nur die Katalog-Liste
+            raise AssertionError("fremde Adresse ohne pasted geladen")
+        except ValueError:
+            pass
+        cs._public = real_pub
         small = cs.square_jpeg(png(300, 500))
         assert Image.open(io.BytesIO(small)).size == (300, 300)          # kleine Bilder werden nicht vergrößert
     finally:

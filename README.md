@@ -80,7 +80,9 @@ Ein Ordner zeigt seine Bilddatei (`cover.jpg` u. ä.), sonst das Bild aus den Mu
 Serien ohne eigenes Bild das der ersten Folge. In der Ordneransicht: **Titelbild** (Foto oder
 Datei) oder **Suchen** – die Box fragt den Katalog von Apple (iTunes) und Deezer und übernimmt das
 angetippte Bild quadratisch mit 800 px als `cover.jpg`. Geladen wird nur von den Bild-Servern der
-beiden Kataloge. Fehlt ein Bild ganz, ist „Suchen“ hervorgehoben. Test: `python3 tests/test_coversearch.py`.
+beiden Kataloge. Fehlt ein Bild ganz, ist „Suchen“ hervorgehoben. Im selben Dialog lässt sich ein
+kopiertes Bild oder eine Bildadresse aus der Zwischenablage einfügen; am PC reicht Strg+V in der
+Ordneransicht. Eingefügte Adressen lädt die Box von jedem Rechner im Internet, nie aus dem Heimnetz. Test: `python3 tests/test_coversearch.py`.
 
 Ganz oben auf einer Seite weiter nach unten ziehen lädt die Ansicht neu (Handy, Tablet, Android-App).
 
