@@ -74,6 +74,16 @@ Viele Folgen auf einmal: Ist jede Folge eine einzige Datei, in der Serie mehrere
 hochladen – „Jede Datei als eigene Folge“ (in einer leeren Serie als Schalter, in einer Serie
 mit Folgen automatisch) legt pro Datei einen Unterordner mit ihrem Namen an.
 
+### Titelbilder
+
+Ein Ordner zeigt seine Bilddatei (`cover.jpg` u. ä.), sonst das Bild aus den Musikdateien, bei
+Serien ohne eigenes Bild das der ersten Folge. In der Ordneransicht: **Titelbild** (Foto oder
+Datei) oder **Suchen** – die Box fragt den Katalog von Apple (iTunes) und Deezer und übernimmt das
+angetippte Bild quadratisch mit 800 px als `cover.jpg`. Geladen wird nur von den Bild-Servern der
+beiden Kataloge. Fehlt ein Bild ganz, ist „Suchen“ hervorgehoben. Test: `python3 tests/test_coversearch.py`.
+
+Ganz oben auf einer Seite weiter nach unten ziehen lädt die Ansicht neu (Handy, Tablet, Android-App).
+
 ### Folgen aufräumen
 
 Dateien kommen unterschiedlich an: mal eine Datei pro Folge, mal mehrere Dateien pro Folge, mal

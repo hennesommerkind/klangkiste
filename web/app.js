@@ -20,6 +20,8 @@ const ICON = {
   sort: '<svg class="icon" viewBox="0 0 24 24"><path d="M7 4v16M3 8l4-4 4 4M17 20V4M13 16l4 4 4-4"/></svg>',
   up: '<svg class="icon" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg>',
   down: '<svg class="icon" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>',
+  search: '<svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>',
+  refresh: '<svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg>',
   camera: '<svg class="icon" viewBox="0 0 24 24"><path d="M4 8a2 2 0 0 1 2-2h2l2-2h4l2 2h2a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><circle cx="12" cy="13" r="3.5"/></svg>',
   move: '<svg class="icon" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M10 13h6M13 10l3 3-3 3"/></svg>',
   vol: '<svg class="icon" viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4zM15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>',
@@ -584,7 +586,7 @@ const viewFolder = run(async () => {
   const meta = [subs.length ? `${subs.length} ${music ? "Unterordner" : subs.length === 1 ? "Folge" : "Folgen"}` : "", `${f.total_tracks} Titel`, tracks.length ? size(total) : ""].filter(Boolean).join(" · ");
   main.innerHTML = `<nav class="crumbs">${ICON.back}${crumbs}</nav>
     <div class="detail-head"><div><div class="figwrap${f.figure_v ? " has-fig" : ""}">${cover(name, true, "&v=" + f.cover_v)}${figImg(figUrl(name, f.figure_v), f.figure_s)}</div>
-        <div class="row cvrow"><button class="btn small" id="cv">${ICON.camera} Titelbild</button>${f.custom_cover ? `<button class="iconbtn" id="cvdel" aria-label="Titelbild entfernen" title="Titelbild entfernen" style="width:36px;height:36px">${ICON.trash}</button>` : ""}<button class="btn small" id="fig">${FIGICON} Figur</button></div></div>
+        <div class="row cvrow"><button class="btn small" id="cv">${ICON.camera} Titelbild</button><button class="btn small" id="cvweb" title="Titelbild im Netz suchen">${ICON.search} Suchen</button>${f.custom_cover ? `<button class="iconbtn" id="cvdel" aria-label="Titelbild entfernen" title="Titelbild entfernen" style="width:36px;height:36px">${ICON.trash}</button>` : ""}<button class="btn small" id="fig">${FIGICON} Figur</button></div></div>
       <div><h1 style="overflow-wrap:anywhere">${esc(leaf(name))}</h1><p class="muted">${meta} ${f.cards.length ? `<span class="pill accent">${f.cards.length === 1 ? "Karte zugewiesen" : f.cards.length + " Karten"}</span>` : ""}</p>
       <div class="row wrap"><button class="btn primary" id="play" ${f.total_tracks ? "" : "disabled"}>${ICON.play.replace("<svg", '<svg class="icon" style="fill:currentColor;stroke:none"')} ${subs.length ? "Alles abspielen" : "Abspielen"}</button>
       <button class="btn" id="assign">${ICON.card} Karte zuweisen</button>
@@ -639,6 +641,10 @@ const viewFolder = run(async () => {
   const epMode = () => !!(drop && drop.dataset.ep) || !!($("#epmode") && $("#epmode").checked);
   files.onchange = () => { upload(name, [...files.files], epMode()); files.value = ""; };
   $("#cv").onclick = () => $("#cvfile").click();
+  $("#cvweb").onclick = () => coverSearchDialog(name);
+  // Fehlt das Bild ganz, fällt der Such-Knopf auf
+  const cvImg = $(".detail-head .cover img"), noCover = () => $("#cvweb")?.classList.add("primary");
+  if (!cvImg || (cvImg.complete && !cvImg.naturalWidth)) noCover(); else cvImg.addEventListener("error", noCover);
   $("#cvfile").onchange = run(async (e) => {
     const file = e.target.files[0]; if (!file) return;
     await uploadCover(name, file); viewFolder();
@@ -649,6 +655,51 @@ const viewFolder = run(async () => {
   dropTarget($("#fig"), (files) => figureDialog(name, figInfo(f), viewFolder, files), "Als Figur");
   if ($("#cvdel")) $("#cvdel").onclick = run(async () => { if (await ask("Titelbild entfernen?", "Danach wird – falls vorhanden – das Bild aus den Musikdateien angezeigt.", "Entfernen", true)) { await api("/api/cover?folder=" + encodeURIComponent(name), {}, "DELETE"); viewFolder(); } });
 });
+
+// ---------- Titelbild im Netz suchen ----------
+/** Suchbegriff aus dem Ordnernamen: Serie + Titel der Folge, ohne Nummern und Trennstriche */
+function coverQuery(name) {
+  const parts = name.split("/").slice(1);
+  const clean = (t) => t.replace(/\[[^\]]*\]|\([^)]*\)/g, " ").replace(/[_–—|:]+/g, " ").replace(/\s+-\s+/g, " ").replace(/\s+/g, " ").trim();
+  if (parts.length < 2) return clean(parts[0] || "");
+  const series = parts[0];
+  let ep = parts[parts.length - 1];
+  if (ep.toLowerCase().startsWith(series.toLowerCase())) ep = ep.slice(series.length);
+  ep = clean(ep).replace(/^(folge\s*)?\d+\s+/i, "");      // „- 038 -“ / „Folge 64“ vorn: die Kataloge zählen anders
+  return clean(series + " " + ep);
+}
+
+function coverSearchDialog(name) {
+  openDialog(`<h2>Titelbild im Netz suchen</h2>
+    <form id="cs-f" class="row cs-form"><input type="search" id="cs-q" value="${esc(coverQuery(name))}" aria-label="Suchbegriff" enterkeyhint="search"><button class="btn primary">${ICON.search} Suchen</button></form>
+    <div id="cs-res" class="cs-grid" aria-live="polite"></div>
+    <p class="muted small">Gesucht wird im Katalog von Apple und bei Deezer. Antippen übernimmt das Bild als Titelbild (quadratisch, 800 px).</p>
+    <div class="actions"><button class="btn" id="cs-x">Schließen</button></div>`);
+  const res = $("#cs-res", dialog), q = $("#cs-q", dialog);
+  $("#cs-x", dialog).onclick = closeDialog;
+  let seq = 0;
+  const search = async () => {
+    const term = q.value.trim(); if (!term) return;
+    const my = ++seq;
+    res.innerHTML = `<p class="muted cs-note">Suche …</p>`;
+    let d;
+    try { d = await api("/api/cover/search?q=" + encodeURIComponent(term)); }
+    catch (e) { if (my === seq) res.innerHTML = `<p class="muted cs-note">${esc(e.message)}</p>`; return; }
+    if (my !== seq) return;
+    const note = d.failed.length ? `<p class="muted small cs-note">${esc(d.failed.join(" und "))} war gerade nicht erreichbar.</p>` : "";
+    if (!d.results.length) { res.innerHTML = `<p class="muted cs-note">Nichts gefunden. Weniger oder andere Wörter versuchen – z. B. nur den Titel der Folge.</p>${note}`; return; }
+    res.innerHTML = d.results.map((r, i) => `<button class="cs-item" data-i="${i}" title="${esc(r.title)} – ${esc(r.artist)}"><img loading="lazy" referrerpolicy="no-referrer" alt="" src="${esc(r.thumb)}"><b>${esc(r.title)}</b><small>${esc(r.artist)} · ${esc(r.source)}</small></button>`).join("") + note;
+    $$(".cs-item", res).forEach((b) => b.onclick = run(async () => {
+      if (res.classList.contains("busy")) return;
+      res.classList.add("busy"); b.classList.add("loading");
+      try { await api("/api/cover/fetch", { folder: name, url: d.results[+b.dataset.i].url }); }
+      finally { res.classList.remove("busy"); b.classList.remove("loading"); }
+      closeDialog(); toast("Titelbild gespeichert"); if (S.folder === name) viewFolder();
+    }));
+  };
+  $("#cs-f", dialog).onsubmit = (e) => { e.preventDefault(); q.blur(); search(); };
+  search();
+}
 
 // ---------- Erscheinungstermine (Adventskalender) ----------
 const releaseDialog = run(async (name) => {
@@ -1195,3 +1246,48 @@ function paintBackup() {
 
 // Schalter für Vorleseprogramme als Schalter auszeichnen (nicht nur als Kästchen)
 new MutationObserver(() => $$(".switch input[type=checkbox]:not([role])").forEach((i) => i.setAttribute("role", "switch"))).observe(document.body, { childList: true, subtree: true });
+
+// ---------- Ganz oben weiter nach unten ziehen = Ansicht aktualisieren ----------
+(() => {
+  const PULL = 64;                 // so weit (gedämpft) ziehen, bis es auslöst
+  const ind = document.createElement("div");
+  ind.id = "ptr"; ind.setAttribute("aria-hidden", "true"); ind.innerHTML = ICON.refresh;
+  document.body.append(ind);
+  let y0 = null, x0 = 0, dist = 0, busy = false;
+  // Nicht bei Schiebereglern, offenen Dialogen und Listen, die selbst rollen
+  const blocked = (t) => dialog.open || t.closest("input[type=range], textarea, .queue, .tidy-list, .sorter");
+  const show = (d) => {
+    const p = Math.min(1, d / PULL);
+    ind.style.transform = `translate(-50%, ${Math.min(d, PULL * 1.4) - 48}px) rotate(${p * 270}deg)`;
+    ind.style.opacity = String(Math.min(1, p * 1.5));
+    ind.classList.toggle("ready", d >= PULL);
+  };
+  const reset = () => { ind.classList.remove("ready", "spin"); ind.style.transition = "transform .25s, opacity .25s"; ind.style.transform = "translate(-50%, -48px)"; ind.style.opacity = "0"; };
+  window.addEventListener("touchstart", (e) => {
+    y0 = null;
+    if (busy || e.touches.length !== 1 || window.scrollY > 0 || blocked(e.target)) return;
+    y0 = e.touches[0].clientY; x0 = e.touches[0].clientX; dist = 0; ind.style.transition = "none";
+  }, { passive: true });
+  window.addEventListener("touchmove", (e) => {
+    if (y0 === null) return;
+    const dy = e.touches[0].clientY - y0, dx = Math.abs(e.touches[0].clientX - x0);
+    if (dy <= 0 || window.scrollY > 0 || dx > dy) { if (dist) reset(); y0 = null; dist = 0; return; }
+    dist = dy * 0.5; show(dist);
+  }, { passive: true });
+  const end = run(async () => {
+    if (y0 === null) return;
+    y0 = null;
+    if (dist < PULL) { reset(); dist = 0; return; }
+    dist = 0; busy = true;
+    ind.style.transition = "transform .2s"; ind.style.transform = `translate(-50%, ${PULL - 36}px)`; ind.classList.add("spin");
+    const t0 = performance.now();
+    try {
+      onState(await api("/api/state"));
+      await loadQueue();
+      render();
+      await new Promise((r) => setTimeout(r, Math.max(0, 600 - (performance.now() - t0))));
+    } finally { busy = false; reset(); }
+  });
+  window.addEventListener("touchend", end);
+  window.addEventListener("touchcancel", () => { y0 = null; dist = 0; reset(); });
+})();

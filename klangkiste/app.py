@@ -18,6 +18,7 @@ from . import __version__, system
 from .backup import Backup, BackupError
 from .bluetooth import Bluetooth, BluetoothError
 from . import sounds
+from . import coversearch
 from . import display
 from . import episodes
 from .network import HOTSPOT_IP, Network, NetworkError
@@ -925,6 +926,24 @@ async def api_cover_set(request):
     if len(data) > 15_000_000:
         raise ValueError("Das Bild ist zu groß (max. 15 MB)")
     box(request).library.set_cover(request.query["folder"], bytes(data), Path(part.filename).suffix)
+    return ok()
+
+
+@routes.get("/api/cover/search")
+async def api_cover_search(request):
+    """Titelbild im Netz suchen (iTunes-Katalog und Deezer)."""
+    return ok(await coversearch.search(request.query.get("q", "")))
+
+
+@routes.post("/api/cover/fetch")
+async def api_cover_fetch(request):
+    """Ein Suchergebnis als Titelbild des Ordners übernehmen."""
+    d = await request.json()
+    b = box(request)
+    b.library.path(d["folder"])                     # Ordner prüfen, bevor etwas geladen wird
+    data = await coversearch.download(d["url"])
+    b.library.set_cover(d["folder"], data, ".jpg")
+    b.publish_state()                               # Bild am Display und in „Läuft“ aktualisieren
     return ok()
 
 

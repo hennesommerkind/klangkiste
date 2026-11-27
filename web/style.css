@@ -12,6 +12,8 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html, body { margin: 0; height: 100%; }
+/* eigenes „Ziehen zum Aktualisieren“ statt Neuladen der ganzen Seite durch den Browser */
+html, body { overscroll-behavior-y: contain; }
 body { background: var(--bg); color: var(--ink); font: 16px/1.45 ui-rounded, "SF Pro Rounded", "Nunito", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; -webkit-tap-highlight-color: transparent; }
 h1 { font-size: 1.7rem; margin: 0 0 .2em; letter-spacing: -.01em; }
 h2 { font-size: 1.15rem; margin: 0 0 .6em; }
@@ -62,7 +64,7 @@ pre { background: var(--surface-2); padding: 12px 14px; border-radius: 12px; ove
 :focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: 2px; }
 label.field { display: block; margin-bottom: 14px; font-weight: 650; font-size: .9rem; }
 label.field > span { display: block; margin-bottom: 5px; }
-input[type=text], input[type=password], input[type=number], input[type=url], input[type=date], input[type=time], select { width: 100%; font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; min-height: 44px; }
+input[type=text], .cs-form input[type=search], input[type=password], input[type=number], input[type=url], input[type=date], input[type=time], select { width: 100%; font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; min-height: 44px; }
 .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 0 16px; }
 .switch > span { font-weight: 650; }
 .switch > span .muted { font-weight: 400; }
@@ -291,3 +293,22 @@ body.dragging .detail-head .figwrap, body.dragging .folders .figwrap, body.dragg
 @media (max-width: 619px) { .iconbtn.lbl { width: 40px; padding: 0; justify-content: center; } .iconbtn.lbl span { display: none; } .iconbtn.apart { margin-left: 4px; } }
 .mutehint { margin: 8px 0 0; border: 0; border-radius: 999px; padding: 6px 14px; font: inherit; font-size: .87rem; font-weight: 700; cursor: pointer; background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); }
 .loading { text-align: center; padding: 60px 0; }
+/* Ziehen zum Aktualisieren */
+#ptr { position: fixed; z-index: 40; top: calc(env(safe-area-inset-top) + 6px); left: 50%; width: 40px; height: 40px; border-radius: 50%; background: var(--surface); border: 1px solid var(--line); box-shadow: 0 6px 18px rgba(0,0,0,.22); display: grid; place-items: center; color: var(--muted); transform: translate(-50%, -48px); opacity: 0; pointer-events: none; }
+#ptr svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+#ptr.ready, #ptr.spin { color: var(--accent); }
+#ptr.spin svg { animation: ptrspin .8s linear infinite; }
+@keyframes ptrspin { to { transform: rotate(360deg); } }
+/* Titelbild im Netz suchen */
+.cs-form { flex-wrap: nowrap; gap: 8px; margin: 6px 0 12px; }
+.cs-form input { flex: 1; min-width: 0; }
+.cs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 12px; max-height: 52vh; overflow-y: auto; padding: 2px; }
+.cs-note { grid-column: 1 / -1; margin: 6px 0; }
+.cs-item { border: 0; background: none; padding: 0; text-align: left; color: inherit; font: inherit; cursor: pointer; display: flex; flex-direction: column; align-self: start; min-width: 0; }
+.cs-item img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 12px; background: var(--surface-2); }
+.cs-item:hover img, .cs-item:focus-visible img { outline: 3px solid var(--accent); outline-offset: 2px; }
+.cs-item b { font-size: .85rem; line-height: 1.25; margin-top: 6px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.cs-item small { color: var(--muted); font-size: .78rem; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.cs-grid.busy .cs-item:not(.loading) { opacity: .4; pointer-events: none; }
+.cs-item.loading img { animation: cspulse 1s ease-in-out infinite alternate; }
+@keyframes cspulse { to { opacity: .45; } }
